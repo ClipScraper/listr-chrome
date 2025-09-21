@@ -19,6 +19,62 @@ let selectionMode = false;
 const selectedAnchors = new Set<HTMLAnchorElement>();
 
 /**
+ * Incremental Instagram collection state
+ */
+type InstagramItem = { url: string; type: 'video' | 'pictures' };
+const collectedInstaLinks = new Set<string>();
+const collectedInstaItems: InstagramItem[] = [];
+
+function toAbsoluteInstagramUrl(pathOrUrl: string): string | null {
+  try {
+    // Normalize and ensure trailing slash for consistency
+    const u = pathOrUrl.startsWith('http')
+      ? new URL(pathOrUrl)
+      : new URL(pathOrUrl, 'https://www.instagram.com');
+    // Only accept instagram host
+    if (!/\.instagram\.com$/.test(u.hostname)) return null;
+    let finalPath = u.pathname.endsWith('/') ? u.pathname : u.pathname + '/';
+    u.pathname = finalPath;
+    u.hash = '';
+    u.search = '';
+    return u.toString();
+  } catch {
+    return null;
+  }
+}
+
+function scanAndCollectInstagramLinks(logEach: boolean = true): InstagramItem[] {
+  const newlyFound: InstagramItem[] = [];
+  document.querySelectorAll<HTMLAnchorElement>('a[href]').forEach(a => {
+    const rawHref = a.getAttribute('href') || '';
+    if (!rawHref) return;
+    const path = rawHref.split('?')[0];
+    // Match /{username}/reel/{id}/ or /reel/{id}/
+    const reelMatch = path.match(/^\/(?:[^/]+\/)?reel\/[^/]+\/?$/);
+    // Match /{username}/p/{id}/ or /p/{id}/
+    const postMatch = path.match(/^\/(?:[^/]+\/)?p\/[^/]+\/?$/);
+
+    let type: 'video' | 'pictures' | null = null;
+    if (reelMatch) type = 'video';
+    else if (postMatch) type = 'pictures';
+    if (!type) return;
+
+    const abs = toAbsoluteInstagramUrl(path);
+    if (!abs) return;
+    if (!collectedInstaLinks.has(abs)) {
+      collectedInstaLinks.add(abs);
+      const item: InstagramItem = { url: abs, type };
+      collectedInstaItems.push(item);
+      newlyFound.push(item);
+      if (logEach) {
+        console.log('Added Instagram link:', item);
+      }
+    }
+  });
+  return newlyFound;
+}
+
+/**
  * Inject minimal CSS for a white overlay
  */
 (function injectSelectionCSS() {
@@ -95,6 +151,16 @@ function doScrollStep() {
   const currentHeight = document.documentElement.scrollHeight;
   window.scrollTo(0, currentHeight);
   scrollCount++;
+
+  // Incremental Instagram link discovery while waiting
+  const newly = scanAndCollectInstagramLinks(true);
+  if (newly.length > 0) {
+    try {
+      browser.runtime.sendMessage({ type: 'instaNewLinks', links: newly.map(n => n.url) })
+        .catch(() => {});
+    } catch {}
+  }
+
   if (currentHeight > lastHeight) {
     lastHeight = currentHeight;
     lastChangeTime = Date.now();
@@ -121,18 +187,12 @@ function sendTimeUpdate(sec: number) {
     .catch(() => {});
 }
 
-function collectInstagramPostLinks(): string[] {
-  const links = new Set<string>();
-  // Find links to Instagram posts/reels. The /p/ pattern seems to be consistent.
-  document.querySelectorAll<HTMLAnchorElement>('a[href*="/p/"]').forEach(a => {
-    // Regex to match full post/reel URLs and capture the base URL for deduplication
-    const match = a.href.match(/(https:\/\/www\.instagram\.com\/p\/[^/]+\/)/);
-    if (match && match[1]) {
-      links.add(match[1]);
-    }
-  });
-  console.log("Collected Instagram links:", Array.from(links));
-  return Array.from(links);
+function collectInstagramPostLinks(): { links: string[]; items: InstagramItem[] } {
+  // Final pass to ensure we didn't miss anything right at the end
+  scanAndCollectInstagramLinks(false);
+
+  console.log("Finished collecting Instagram links. Total unique links:", collectedInstaLinks.size);
+  return { links: Array.from(collectedInstaLinks), items: [...collectedInstaItems] };
 }
 
 /**
@@ -194,8 +254,11 @@ browser.runtime.onMessage.addListener((message: any, _sender: any, sendResponse:
     sendResponse({ status: "Instagram scrolling started" });
   }
   else if (message.action === "collectInstagramPostLinks") {
-    const links = collectInstagramPostLinks();
-    sendResponse({ links });
+    const { links, items } = collectInstagramPostLinks();
+    sendResponse({ links, items });
+  }
+  else if (message.action === "ping") {
+    sendResponse({ status: "pong" });
   }
 
   return true;

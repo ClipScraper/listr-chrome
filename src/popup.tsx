@@ -1,6 +1,6 @@
 import * as React from 'react';
 import * as ReactDOM from 'react-dom';
-import { Sun, Moon, Download, Ban, Save, ListTodo, Play, Pause } from 'lucide-react';
+import { Sun, Moon, Download, Ban, Save, ListTodo, Play, Pause, Trash2 } from 'lucide-react';
 // import { LuListEnd } from 'react-icons/lu';
 import browser from 'webextension-polyfill';
 import { useActiveTab } from './hooks/useActiveTab';
@@ -9,16 +9,50 @@ import { useSelectionMode } from './hooks/useSelectionMode';
 import { useCollections, Bookmark, CollectionStore } from './hooks/useCollections';
 import './styles/popup.css';
 
+interface ContentScriptPingResponse {
+  status: "pong";
+}
+
+// Function to ping the content script and check if it's active
+async function pingContentScript(tabId: number): Promise<boolean> {
+  try {
+    const response = await browser.tabs.sendMessage(tabId, { action: "ping" }) as ContentScriptPingResponse;
+    return response?.status === "pong";
+  } catch (error) {
+    console.warn("Content script not reachable (ping failed):", error);
+    return false;
+  }
+}
+
 const tiktokVideoRegex = /^https:\/\/www\.tiktok\.com\/[^/]+\/[^/]+\/\d+/;
 
 const Popup: React.FC = () => {
   const { activeUrl } = useActiveTab();
-  const { scrollStatus, timeRemaining, startScrolling, stopResumeScrolling, startInstagramScrolling } = useScrolling();
-  const { collectionStore, addBookmarksToCollection, deleteCollection, getAllCollections } = useCollections();
+  const { scrollStatus, timeRemaining, startScrolling, stopResumeScrolling, startInstagramScrolling } = useScrolling(onInstagramScrollComplete);
+  const { collectionStore, addBookmarksToCollection, deleteCollection, getAllCollections, ensureCollection, getCollectionMeta } = useCollections();
   const { isSelecting, startSelectionMode, validateSelection, cancelSelection } = useSelectionMode((urls) => addBookmarksToCollection('tiktok', 'selected_tiktok_links', urls));
 
   const [isDarkMode, setIsDarkMode] = React.useState(false);
   const toggleTheme = () => setIsDarkMode(prev => !prev);
+
+  React.useEffect(() => {
+    const handler = (message: any) => {
+      if (message.type === 'instaNewLinks') {
+        // Determine active Instagram collection name and append incrementally
+        if (!isInstagramDomain) return;
+        let collectionName = extractInstagramCollectionName(activeUrl);
+        if (activeUrl.includes('/saved/all-posts/')) {
+          collectionName = 'all-posts';
+        }
+        const links: string[] = message.links || [];
+        if (links.length > 0) {
+          addBookmarksToCollection('instagram', collectionName, links);
+        }
+      }
+    };
+    browser.runtime.onMessage.addListener(handler);
+    return () => browser.runtime.onMessage.removeListener(handler);
+  }, [activeUrl]);
 
   const isTikTokDomain = activeUrl.startsWith("https://www.tiktok.com");
   const isInstagramDomain = activeUrl.startsWith("https://www.instagram.com");
@@ -44,7 +78,20 @@ const Popup: React.FC = () => {
     return 'Instagram Page';
   };
 
-  const onInstagramScrollComplete = () => {
+  const getInstagramTypeAndHandle = (url: string) => {
+    const savedMatch = url.match(/https:\/\/www\.instagram\.com\/([^/]+)\/saved\/([^/]+)\//);
+    if (savedMatch && savedMatch[2]) {
+      return { type: 'bookmarks' as const, handle: savedMatch[2] };
+    }
+    const userMatch = url.match(/https:\/\/www\.instagram\.com\/([^/]+)\//);
+    if (userMatch && userMatch[1]) {
+      return { type: 'profile' as const, handle: userMatch[1] };
+    }
+    return { type: 'profile' as const, handle: 'unknown' };
+  };
+
+  function onInstagramScrollComplete() {
+    if (!isInstagramDomain) return;
     browser.tabs.query({ active: true, currentWindow: true })
       .then(tabs => {
         const tabId = tabs[0]?.id;
@@ -74,7 +121,7 @@ const Popup: React.FC = () => {
         addBookmarksToCollection('instagram', collectionName, response.links);
       })
       .catch(err => console.error("Error collecting Instagram links:", err));
-  };
+  }
 
   const handleBookmarkClick = () => {
     if (!isVideoPage) {
@@ -116,8 +163,31 @@ const Popup: React.FC = () => {
       .catch(err => console.error("Error opening endpoint:", err));
   };
 
-  const handleInstagramScrollAndCollect = () => {
+  const handleInstagramScrollAndCollect = async () => {
     if (isInstagramDomain && scrollStatus === 'idle') {
+      const tabs = await browser.tabs.query({ active: true, currentWindow: true });
+      const tabId = tabs[0]?.id;
+      if (tabId == null) {
+        console.error("No active tab found.");
+        return;
+      }
+
+      // Ping the content script before starting to scroll
+      const isContentScriptReady = await pingContentScript(tabId);
+      if (!isContentScriptReady) {
+        console.error("Content script is not ready. Cannot start scrolling.");
+        alert("The content script is not active on this page. Please refresh the page and try again.");
+        return;
+      }
+
+      // Ensure an empty collection is visible immediately
+      let collectionName = extractInstagramCollectionName(activeUrl);
+      if (activeUrl.includes('/saved/all-posts/')) {
+        collectionName = 'all-posts';
+      }
+      const meta = getInstagramTypeAndHandle(activeUrl);
+      ensureCollection('instagram', collectionName, { type: meta.type, handle: meta.handle });
+
       // Add a small delay to ensure content script is ready
       setTimeout(() => {
         startInstagramScrolling();
@@ -247,44 +317,51 @@ const Popup: React.FC = () => {
         )}
 
         {/* Collections Display Table */}
-        {Object.keys(getAllCollections()).length > 0 && (
-          <div className="collections-table-section">
-            <h3>Saved Collections</h3>
-            <table>
-              <thead>
+        <div className="collections-table-section">
+          <h3>Saved Collections</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>Platform</th>
+                <th>Type</th>
+                <th>Handle</th>
+                <th>Items</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {Object.keys(getAllCollections()).length === 0 && (
                 <tr>
-                  <th>Platform</th>
-                  <th>Collection Name</th>
-                  <th>Items</th>
-                  <th>Action</th>
+                  <td colSpan={5} style={{ textAlign: 'center', fontSize: '0.85rem', opacity: 0.7 }}>No collections yet</td>
                 </tr>
-              </thead>
-              <tbody>
-                {Object.entries(getAllCollections()).map(([platform, platformCollections]) => (
-                  Object.entries(platformCollections).map(([colName, bookmarks]) => (
-                    <tr key={`${platform}-${colName}`}>
-                      <td>
-                        {platform === 'instagram' && <img src="assets/instagram.webp" alt="Instagram" width={20} height={20} />}
-                        {platform === 'tiktok' && <img src="assets/tiktok.webp" alt="TikTok" width={20} height={20} />}
-                        {platform === 'other' && <Ban size={20} />}
-                      </td>
-                      <td>{colName}</td>
-                      <td>{bookmarks.length}</td>
-                      <td>
-                        <button onClick={() => deleteCollection(platform, colName)} className="delete-button">
-                          X
+              )}
+              {Object.entries(getAllCollections()).map(([platform, platformCollections]) => (
+                Object.entries(platformCollections).map(([colName, bookmarks]) => (
+                  <tr key={`${platform}-${colName}`}>
+                    <td>
+                      {platform === 'instagram' && <img src="assets/instagram.webp" alt="Instagram" width={20} height={20} />}
+                      {platform === 'tiktok' && <img src="assets/tiktok.webp" alt="TikTok" width={20} height={20} />}
+                      {platform === 'other' && <Ban size={20} />}
+                    </td>
+                    <td>{getCollectionMeta(platform, colName)?.type || 'profile'}</td>
+                    <td>{getCollectionMeta(platform, colName)?.handle || colName}</td>
+                    <td>{bookmarks.length}</td>
+                    <td>
+                      <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}>
+                        <button onClick={() => deleteCollection(platform, colName)} className="theme-toggle-button" aria-label="Delete collection">
+                          <Trash2 size={18} />
                         </button>
-                        <button onClick={() => downloadCollectionAsCsv(platform, colName)} className="theme-toggle-button">
+                        <button onClick={() => downloadCollectionAsCsv(platform, colName)} className="theme-toggle-button" aria-label="Save collection">
                           <Save size={20} />
                         </button>
-                      </td>
-                    </tr>
-                  ))
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              ))}
+            </tbody>
+          </table>
+        </div>
 
       </div>
     </div>
