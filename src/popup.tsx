@@ -355,12 +355,19 @@ const Popup: React.FC = () => {
                     <ListTodo size={20} />
                   </button>
                 )}
-                <button
-                  onClick={scrollStatus === 'idle' ? handleInstagramScrollAndCollect : stopResumeScrolling}
-                  className="theme-toggle-button"
-                >
-                  {scrollStatus === 'scrolling' ? <Pause size={20} /> : <Play size={20} />}
-                </button>
+                {scrollStatus !== 'idle' && (
+                  <>
+                    <button
+                      onClick={stopResumeScrolling}
+                      className="theme-toggle-button"
+                    >
+                      {scrollStatus === 'scrolling' ? <Pause size={20} /> : <Play size={20} />}
+                    </button>
+                    <div className="scroll-timer" style={{ marginBottom: 0 }}>
+                      Time until next scroll: {timeRemaining} seconds
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           )}
@@ -405,12 +412,6 @@ const Popup: React.FC = () => {
           )}
         </div>
 
-        {scrollStatus !== 'idle' && (
-          <div className="scroll-timer">
-            Time until next scroll: {timeRemaining} seconds
-          </div>
-        )}
-
         {/* Collections Display Table */}
         <div className="collections-table-section">
           <h3>Saved Collections</h3>
@@ -446,9 +447,7 @@ const Popup: React.FC = () => {
                         <button onClick={() => deleteCollection(platform, colName)} className="theme-toggle-button" aria-label="Delete collection">
                           <Trash2 size={18} />
                         </button>
-                        <button onClick={() => downloadCollectionAsCsv(platform, colName)} className="theme-toggle-button" aria-label="Save collection">
-                          <Save size={20} />
-                        </button>
+                        {/* Removed floppy disk save button per request */}
                         <button onClick={() => downloadCollectionAsDetailedCsv(platform, colName)} className="theme-toggle-button" aria-label="Download data CSV">
                           <Download size={18} />
                         </button>
