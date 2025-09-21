@@ -1,0 +1,126 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Reset & base styles */
+html,
+body {
+  margin: 0;
+  padding: 0;
+  font-family: sans-serif;
+  background: #fff;
+}
+
+.popup-container {
+  padding: 0.5rem;
+  background-color: #fff;
+  color: #000;
+}
+
+.dark .popup-container {
+  background-color: #2d3748;
+  color: #f9f9f9;
+}
+
+/* Row that holds all buttons on the same line */
+.top-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+
+/* Theme toggle button with no background; color changes with theme */
+.theme-toggle-button {
+  width: 40px;
+  height: 30px;
+  border: none;
+  background-color: transparent !important;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #333;
+}
+
+.theme-toggle-button:hover {
+  background-color: transparent !important;
+}
+
+.dark .theme-toggle-button {
+  color: #f9f9f9;
+}
+
+/* Shared button style */
+.btn {
+  font-size: 0.75rem;
+  padding: 0.25rem 0.5rem;
+  border: none;
+  border-radius: 0.25rem;
+  cursor: pointer;
+  background-color: #e0e0e0;
+  color: #333;
+  min-width: 70px;
+  text-align: center;
+}
+
+.btn:hover {
+  background-color: #d4d4d4;
+}
+
+.dark .btn {
+  background-color: #4a5568;
+  color: #f9f9f9;
+}
+
+.dark .btn:hover {
+  background-color: #5a6375;
+}
+
+/* Timer text */
+.scroll-timer {
+  font-size: 0.75rem;
+  margin-bottom: 0.25rem;
+}
+
+/* Bookmark list */
+.bookmark-list {
+  margin-top: 0.25rem;
+}
+
+.bookmark-list ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.bookmark-list li {
+  display: flex;
+  align-items: center;
+  margin-bottom: 0.25rem;
+}
+
+/* 'X' delete button for bookmarks with a distinct color */
+.delete-button {
+  background: transparent;
+  margin-right: 0.25rem;
+  padding: 0.25rem;
+  font-size: 0.75rem;
+  color: #333;
+  border: none;
+  cursor: pointer;
+}
+
+.delete-button:hover {
+  color: #000;
+}
+
+.dark .delete-button {
+  color: #bbb;
+}
+
+.dark .delete-button:hover {
+  color: #fff;
+}
+
+
