@@ -44,5 +44,3 @@ mkdir -p "$RELEASE_DIR"
 (cd "$TEMP_DIR" && zip -q -r "$RELEASE_DIR/$ZIP_NAME" .)
 
 echo "Done: $RELEASE_DIR/$ZIP_NAME"
-
-

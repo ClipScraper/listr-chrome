@@ -19,6 +19,62 @@ let selectionMode = false;
 const selectedAnchors = new Set<HTMLAnchorElement>();
 
 /**
+ * Incremental Instagram collection state
+ */
+type InstagramItem = { url: string; type: 'video' | 'pictures' };
+const collectedInstaLinks = new Set<string>();
+const collectedInstaItems: InstagramItem[] = [];
+
+function toAbsoluteInstagramUrl(pathOrUrl: string): string | null {
+  try {
+    // Normalize and ensure trailing slash for consistency
+    const u = pathOrUrl.startsWith('http')
+      ? new URL(pathOrUrl)
+      : new URL(pathOrUrl, 'https://www.instagram.com');
+    // Only accept instagram host
+    if (!/\.instagram\.com$/.test(u.hostname)) return null;
+    let finalPath = u.pathname.endsWith('/') ? u.pathname : u.pathname + '/';
+    u.pathname = finalPath;
+    u.hash = '';
+    u.search = '';
+    return u.toString();
+  } catch {
+    return null;
+  }
+}
+
+function scanAndCollectInstagramLinks(logEach: boolean = true): InstagramItem[] {
+  const newlyFound: InstagramItem[] = [];
+  document.querySelectorAll<HTMLAnchorElement>('a[href]').forEach(a => {
+    const rawHref = a.getAttribute('href') || '';
+    if (!rawHref) return;
+    const path = rawHref.split('?')[0];
+    // Match /{username}/reel/{id}/ or /reel/{id}/
+    const reelMatch = path.match(/^\/(?:[^/]+\/)?reel\/[^/]+\/?$/);
+    // Match /{username}/p/{id}/ or /p/{id}/
+    const postMatch = path.match(/^\/(?:[^/]+\/)?p\/[^/]+\/?$/);
+
+    let type: 'video' | 'pictures' | null = null;
+    if (reelMatch) type = 'video';
+    else if (postMatch) type = 'pictures';
+    if (!type) return;
+
+    const abs = toAbsoluteInstagramUrl(path);
+    if (!abs) return;
+    if (!collectedInstaLinks.has(abs)) {
+      collectedInstaLinks.add(abs);
+      const item: InstagramItem = { url: abs, type };
+      collectedInstaItems.push(item);
+      newlyFound.push(item);
+      if (logEach) {
+        console.log('Added Instagram link:', item);
+      }
+    }
+  });
+  return newlyFound;
+}
+
+/**
  * Inject minimal CSS for a white overlay
  */
 (function injectSelectionCSS() {
@@ -95,18 +151,30 @@ function doScrollStep() {
   const currentHeight = document.documentElement.scrollHeight;
   window.scrollTo(0, currentHeight);
   scrollCount++;
+
+  // Incremental Instagram link discovery while waiting
+  const newly = scanAndCollectInstagramLinks(true);
+  if (newly.length > 0) {
+    try {
+      browser.runtime.sendMessage({ type: 'instaNewLinks', links: newly.map(n => n.url) })
+        .catch(() => {});
+    } catch {}
+  }
+
   if (currentHeight > lastHeight) {
     lastHeight = currentHeight;
     lastChangeTime = Date.now();
     console.log(`New content loaded. Updated height: ${currentHeight}`);
   } else {
-    if (Date.now() - lastChangeTime > 20000) {
-      console.log("Scrolling stopped. No new content loaded in 20 seconds.");
+    if (Date.now() - lastChangeTime > 2000) { // Reduced from 20000 to 2000 (2 seconds)
+      console.log("Scrolling stopped. No new content loaded in 2 seconds.");
       stopScrolling();
+      browser.runtime.sendMessage({ type: 'scrollComplete' })
+        .catch(() => {});
       return;
     }
   }
-  const nextDelayMs = (scrollCount % 5 === 0) ? 10000 : 5000;
+  const nextDelayMs = 1000; // Reduced from 10000 and 5000 to 1000
   timeRemaining = nextDelayMs / 1000;
   sendTimeUpdate(timeRemaining);
 }
@@ -117,6 +185,14 @@ function scrollToBottom() {
 function sendTimeUpdate(sec: number) {
   browser.runtime.sendMessage({ type: 'scrollTimeUpdate', timeRemaining: sec })
     .catch(() => {});
+}
+
+function collectInstagramPostLinks(): { links: string[]; items: InstagramItem[] } {
+  // Final pass to ensure we didn't miss anything right at the end
+  scanAndCollectInstagramLinks(false);
+
+  console.log("Finished collecting Instagram links. Total unique links:", collectedInstaLinks.size);
+  return { links: Array.from(collectedInstaLinks), items: [...collectedInstaItems] };
 }
 
 /**
@@ -171,6 +247,18 @@ browser.runtime.onMessage.addListener((message: any, _sender: any, sendResponse:
     selectedAnchors.clear();
     selectionMode = false;
     sendResponse({ status: "Selection canceled" });
+  }
+  else if (message.action === "startInstagramScrolling") {
+    initScrollVars();
+    startScrolling();
+    sendResponse({ status: "Instagram scrolling started" });
+  }
+  else if (message.action === "collectInstagramPostLinks") {
+    const { links, items } = collectInstagramPostLinks();
+    sendResponse({ links, items });
+  }
+  else if (message.action === "ping") {
+    sendResponse({ status: "pong" });
   }
 
   return true;
