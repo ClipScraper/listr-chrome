@@ -33,7 +33,7 @@ trap 'rm -rf "$TEMP_DIR"' EXIT
 
 # Copy required files into temp staging directory
 mkdir -p "$TEMP_DIR"
-cp -a manifest.json popup.html icons "$TEMP_DIR/"
+cp -a manifest.json popup.html icons assets "$TEMP_DIR/"
 cp -a dist "$TEMP_DIR/"
 
 # Optional: include README and LICENSE

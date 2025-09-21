@@ -1,6 +1,6 @@
 import * as React from 'react';
 import * as ReactDOM from 'react-dom';
-import { Sun, Moon, Download } from 'lucide-react';
+import { Sun, Moon, Download, Ban } from 'lucide-react';
 import browser from 'webextension-polyfill';
 import { useActiveTab } from './hooks/useActiveTab';
 import { useBookmarks } from './hooks/useBookmarks';
@@ -20,6 +20,7 @@ const Popup: React.FC = () => {
   const toggleTheme = () => setIsDarkMode(prev => !prev);
 
   const isTikTokDomain = activeUrl.startsWith("https://www.tiktok.com");
+  const isInstagramDomain = activeUrl.startsWith("https://www.instagram.com");
   const isVideoPage = tiktokVideoRegex.test(activeUrl);
 
   const handleBookmarkClick = () => {
@@ -66,6 +67,14 @@ const Popup: React.FC = () => {
     <div className={isDarkMode ? "dark" : ""}>
       <div className="popup-container">
         <div className="top-row">
+          {/* Platform indicator */}
+          {isInstagramDomain ? (
+            <img src="assets/instagram.webp" alt="Instagram" width={20} height={20} />
+          ) : isTikTokDomain ? (
+            <img src="assets/tiktok.webp" alt="TikTok" width={20} height={20} />
+          ) : (
+            <Ban size={20} />
+          )}
           <button onClick={toggleTheme} className="theme-toggle-button">
             {isDarkMode ? <Sun /> : <Moon />}
           </button>
