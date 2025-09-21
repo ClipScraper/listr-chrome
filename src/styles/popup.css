@@ -15,8 +15,8 @@ body {
   padding: 0.5rem;
   background-color: #fff;
   color: #000;
-  width: 360px; /* Fixed width */
-  max-height: 500px; /* Max height */
+  width: 460px; /* Widen to fit table */
+  max-height: 600px; /* Allow a bit more height before scrolling */
   overflow-y: auto; /* Enable vertical scrolling */
 }
 
@@ -159,4 +159,42 @@ body {
   border-top: 1px solid #e0e0e0;
   max-height: 200px; /* Limit height of the collections table */
   overflow-y: auto; /* Make collections table scrollable */
+}
+
+/* Collections table visual separators (no outer border) */
+.collections-table-section table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.collections-table-section th,
+.collections-table-section td {
+  text-align: center;
+  padding: 0.25rem 0.5rem;
+}
+
+/* Divider between header and rows */
+.collections-table-section thead th {
+  border-bottom: 1px solid #e0e0e0;
+}
+.dark .collections-table-section thead th {
+  border-bottom: 1px solid #4a5568;
+}
+
+/* Vertical separators between columns; no outer edges */
+.collections-table-section th:not(:first-child),
+.collections-table-section td:not(:first-child) {
+  border-left: 1px solid #e0e0e0;
+  padding-left: calc(0.5rem + 3px); /* 3px space near separator */
+}
+.dark .collections-table-section th:not(:first-child),
+.dark .collections-table-section td:not(:first-child) {
+  border-left: 1px solid #4a5568;
+}
+
+/* Add 3px space on the other side of the separator as well */
+.collections-table-section th:not(:last-child),
+.collections-table-section td:not(:last-child) {
+  padding-right: calc(0.5rem + 3px);
 }

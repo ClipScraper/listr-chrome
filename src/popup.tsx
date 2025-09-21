@@ -85,15 +85,26 @@ const Popup: React.FC = () => {
   };
 
   const getInstagramTypeAndHandle = (url: string) => {
+    // Saved collections → use the folder name
     const savedMatch = url.match(/https:\/\/www\.instagram\.com\/([^/]+)\/saved\/([^/]+)\//);
     if (savedMatch && savedMatch[2]) {
       return { type: 'bookmarks' as const, handle: savedMatch[2] };
     }
-    const userMatch = url.match(/https:\/\/www\.instagram\.com\/([^/]+)\//);
-    if (userMatch && userMatch[1]) {
-      return { type: 'profile' as const, handle: userMatch[1] };
+    try {
+      const u = new URL(url);
+      const firstSeg = u.pathname.split('/').filter(Boolean)[0];
+      if (firstSeg) {
+        // Profile or username-based pages → use the username
+        return { type: 'profile' as const, handle: firstSeg };
+      }
+      // Fallback → show readable page url instead of "unknown"
+      const host = u.hostname.replace(/^www\./, '');
+      const path = u.pathname.replace(/\/$/, '');
+      return { type: 'profile' as const, handle: `${host}${path}` };
+    } catch {
+      // Last resort: return the url without scheme/www
+      return { type: 'profile' as const, handle: url.replace(/^https?:\/\//, '').replace(/^www\./, '') };
     }
-    return { type: 'profile' as const, handle: 'unknown' };
   };
 
   function onInstagramScrollComplete() {
@@ -443,7 +454,7 @@ const Popup: React.FC = () => {
                     <td>{getCollectionMeta(platform, colName)?.handle || colName}</td>
                     <td>{bookmarks.length}</td>
                     <td>
-                      <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}>
+                      <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center', justifyContent: 'center' }}>
                         <button onClick={() => deleteCollection(platform, colName)} className="theme-toggle-button" aria-label="Delete collection">
                           <Trash2 size={18} />
                         </button>
