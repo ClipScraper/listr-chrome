@@ -18,6 +18,27 @@ npm run build:prod
 4. Click "Load unpacked" and select this folder.
 5. The popup loads from `popup.html`, scripts from `dist/`.
 
+## Package for Chrome Web Store
+
+You need a ZIP of the extension directory (no `node_modules`, sources compiled to `dist/`). Use the script below:
+
+```bash
+# Default: production endpoint
+./scripts/package.sh
+
+# Or choose env explicitly: development | test | production
+./scripts/package.sh production
+```
+
+This creates `release/<name>-<version>-<env>.zip` ready for upload.
+
+## Publish to Chrome Web Store
+
+1. Create a developer account at the Chrome Web Store Developer Dashboard.
+2. Click "New Item" and upload the ZIP from the `release/` folder.
+3. Fill in listing details, privacy, and permissions justification.
+4. Submit for review.
+
 ## Permissions
 - "tabs", "storage"
 - Host permissions: `<all_urls>`

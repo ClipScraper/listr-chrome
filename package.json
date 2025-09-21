@@ -6,7 +6,8 @@
     "build": "TIKTOKZE_ENV=development webpack --mode production",
     "build:test": "TIKTOKZE_ENV=test webpack --mode production",
     "build:prod": "TIKTOKZE_ENV=production webpack --mode production",
-    "start": "webpack --mode development --watch"
+    "start": "webpack --mode development --watch",
+    "package": "./scripts/package.sh"
   },
   "dependencies": {
     "lucide-react": "^0.477.0",
