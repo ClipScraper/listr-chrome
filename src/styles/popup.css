@@ -15,7 +15,7 @@ body {
   padding: 0.5rem;
   background-color: #fff;
   color: #000;
-  width: 300px; /* Fixed width */
+  width: 360px; /* Fixed width */
   max-height: 500px; /* Max height */
   overflow-y: auto; /* Enable vertical scrolling */
 }
@@ -160,5 +160,3 @@ body {
   max-height: 200px; /* Limit height of the collections table */
   overflow-y: auto; /* Make collections table scrollable */
 }
-
-
