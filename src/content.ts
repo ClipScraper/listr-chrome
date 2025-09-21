@@ -100,13 +100,15 @@ function doScrollStep() {
     lastChangeTime = Date.now();
     console.log(`New content loaded. Updated height: ${currentHeight}`);
   } else {
-    if (Date.now() - lastChangeTime > 20000) {
-      console.log("Scrolling stopped. No new content loaded in 20 seconds.");
+    if (Date.now() - lastChangeTime > 2000) { // Reduced from 20000 to 2000 (2 seconds)
+      console.log("Scrolling stopped. No new content loaded in 2 seconds.");
       stopScrolling();
+      browser.runtime.sendMessage({ type: 'scrollComplete' })
+        .catch(() => {});
       return;
     }
   }
-  const nextDelayMs = (scrollCount % 5 === 0) ? 10000 : 5000;
+  const nextDelayMs = 1000; // Reduced from 10000 and 5000 to 1000
   timeRemaining = nextDelayMs / 1000;
   sendTimeUpdate(timeRemaining);
 }
@@ -117,6 +119,20 @@ function scrollToBottom() {
 function sendTimeUpdate(sec: number) {
   browser.runtime.sendMessage({ type: 'scrollTimeUpdate', timeRemaining: sec })
     .catch(() => {});
+}
+
+function collectInstagramPostLinks(): string[] {
+  const links = new Set<string>();
+  // Find links to Instagram posts/reels. The /p/ pattern seems to be consistent.
+  document.querySelectorAll<HTMLAnchorElement>('a[href*="/p/"]').forEach(a => {
+    // Regex to match full post/reel URLs and capture the base URL for deduplication
+    const match = a.href.match(/(https:\/\/www\.instagram\.com\/p\/[^/]+\/)/);
+    if (match && match[1]) {
+      links.add(match[1]);
+    }
+  });
+  console.log("Collected Instagram links:", Array.from(links));
+  return Array.from(links);
 }
 
 /**
@@ -171,6 +187,15 @@ browser.runtime.onMessage.addListener((message: any, _sender: any, sendResponse:
     selectedAnchors.clear();
     selectionMode = false;
     sendResponse({ status: "Selection canceled" });
+  }
+  else if (message.action === "startInstagramScrolling") {
+    initScrollVars();
+    startScrolling();
+    sendResponse({ status: "Instagram scrolling started" });
+  }
+  else if (message.action === "collectInstagramPostLinks") {
+    const links = collectInstagramPostLinks();
+    sendResponse({ links });
   }
 
   return true;
