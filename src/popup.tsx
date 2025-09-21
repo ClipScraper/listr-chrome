@@ -218,6 +218,49 @@ const Popup: React.FC = () => {
     }).catch(err => console.error("Error downloading CSV:", err));
   };
 
+  // New: download a detailed CSV with columns: Platform, Type, Handle, link
+  const downloadCollectionAsDetailedCsv = (platform: string, collectionName: string) => {
+    const collectionsByPlatform = collectionStore.collections[platform];
+    if (!collectionsByPlatform) return;
+
+    const bookmarks = collectionsByPlatform[collectionName];
+    if (!bookmarks || bookmarks.length === 0) {
+      alert("No links to download for this collection.");
+      return;
+    }
+
+    const meta = getCollectionMeta(platform, collectionName) || { type: 'profile', handle: collectionName } as any;
+
+    const escapeCsv = (value: string) => {
+      const needsQuotes = /[",\n]/.test(value);
+      const escaped = value.replace(/"/g, '""');
+      return needsQuotes ? `"${escaped}"` : escaped;
+    };
+
+    const header = ["Platform", "Type", "Handle", "link"]; // keep exact casing per request
+    const rows = bookmarks.map(bm => [
+      platform,
+      meta.type,
+      meta.handle,
+      bm.url,
+    ]);
+
+    const csvContent = [header, ...rows]
+      .map(row => row.map(col => escapeCsv(String(col))).join(","))
+      .join("\n");
+
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+
+    const filename = `${platform}.${collectionName}.data.csv`;
+
+    browser.downloads.download({
+      url: url,
+      filename: filename,
+      saveAs: true
+    }).catch(err => console.error("Error downloading detailed CSV:", err));
+  };
+
   return (
     <div className={isDarkMode ? "dark" : ""}>
       <div className="popup-container">
@@ -254,6 +297,9 @@ const Popup: React.FC = () => {
                 )}
                 <button onClick={() => downloadCollectionAsCsv('instagram', extractInstagramCollectionName(activeUrl))} className="theme-toggle-button">
                   <Save size={20} />
+                </button>
+                <button onClick={() => downloadCollectionAsDetailedCsv('instagram', extractInstagramCollectionName(activeUrl))} className="theme-toggle-button" aria-label="Download data CSV">
+                  <Download size={20} />
                 </button>
               </div>
             </div>
@@ -353,6 +399,9 @@ const Popup: React.FC = () => {
                         </button>
                         <button onClick={() => downloadCollectionAsCsv(platform, colName)} className="theme-toggle-button" aria-label="Save collection">
                           <Save size={20} />
+                        </button>
+                        <button onClick={() => downloadCollectionAsDetailedCsv(platform, colName)} className="theme-toggle-button" aria-label="Download data CSV">
+                          <Download size={18} />
                         </button>
                       </div>
                     </td>
