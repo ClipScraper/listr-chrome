@@ -328,31 +328,6 @@ const Popup: React.FC = () => {
           <button onClick={downloadAllCollectionsAsDetailedCsv} className="theme-toggle-button">
             <Download />
           </button>
-          {/* Instagram Specific Controls */}
-          {isInstagramDomain && (
-            <div className="instagram-controls-section">
-              <h4>{getInstagramPageTitle(activeUrl)}</h4>
-              <div className="instagram-buttons-row">
-                <button
-                  onClick={scrollStatus === 'idle' ? handleInstagramScrollAndCollect : stopResumeScrolling}
-                  className="theme-toggle-button"
-                >
-                  {scrollStatus === 'scrolling' ? <Pause size={20} /> : <Play size={20} />}
-                </button>
-                {scrollStatus === 'idle' && (
-                  <button onClick={handleInstagramScrollAndCollect} className="theme-toggle-button" style={{ transform: 'scaleX(-1)' }}>
-                    <ListTodo size={20} />
-                  </button>
-                )}
-                <button onClick={() => downloadCollectionAsCsv('instagram', extractInstagramCollectionName(activeUrl))} className="theme-toggle-button">
-                  <Save size={20} />
-                </button>
-                <button onClick={() => downloadCollectionAsDetailedCsv('instagram', extractInstagramCollectionName(activeUrl))} className="theme-toggle-button" aria-label="Download data CSV">
-                  <Download size={20} />
-                </button>
-              </div>
-            </div>
-          )}
           <button onClick={() => {
             if (confirm("Are you sure you want to clear all saved collections?")) {
               Object.keys(getAllCollections()).forEach(platform => {
@@ -361,9 +336,28 @@ const Popup: React.FC = () => {
                 });
               });
             }
-          }} className="btn">
-            Clear All Collections
+          }} className="theme-toggle-button" aria-label="Clear all collections">
+            <Trash2 size={20} />
           </button>
+          {/* Instagram Specific Controls */}
+          {isInstagramDomain && (
+            <div className="instagram-controls-section">
+              <h4>{getInstagramPageTitle(activeUrl)}</h4>
+              <div className="instagram-buttons-row">
+                {scrollStatus === 'idle' && (
+                  <button onClick={handleInstagramScrollAndCollect} className="theme-toggle-button" style={{ transform: 'scaleX(-1)' }}>
+                    <ListTodo size={20} />
+                  </button>
+                )}
+                <button
+                  onClick={scrollStatus === 'idle' ? handleInstagramScrollAndCollect : stopResumeScrolling}
+                  className="theme-toggle-button"
+                >
+                  {scrollStatus === 'scrolling' ? <Pause size={20} /> : <Play size={20} />}
+                </button>
+              </div>
+            </div>
+          )}
           {isTikTokDomain && (
             <>
               {(!isVideoPage && !isSelecting && scrollStatus === 'idle') && (
