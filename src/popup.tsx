@@ -59,9 +59,15 @@ const Popup: React.FC = () => {
   const isVideoPage = tiktokVideoRegex.test(activeUrl);
 
   const extractInstagramCollectionName = (url: string) => {
-    const match = url.match(/https:\/\/www\.instagram\.com\/([^/]+)\/saved\/([^/]+)\//);
-    if (match && match[2]) {
-      return match[2];
+    // Saved collections: use the saved folder name (e.g., all-posts, tech-memes)
+    const savedMatch = url.match(/https:\/\/www\.instagram\.com\/([^/]+)\/saved\/([^/]+)\//);
+    if (savedMatch && savedMatch[2]) {
+      return savedMatch[2];
+    }
+    // Profile or reels pages: use the username as the collection key
+    const profileMatch = url.match(/https:\/\/www\.instagram\.com\/([^/]+)\/(?:reels\/)?/);
+    if (profileMatch && profileMatch[1]) {
+      return profileMatch[1];
     }
     return 'my_collection';
   };
