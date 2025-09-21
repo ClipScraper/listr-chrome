@@ -149,18 +149,21 @@ const Popup: React.FC = () => {
       .catch(err => console.error("Error collecting video links:", err));
   };
 
-  // Open endpoint tab, then forward bookmarks to it via content script
-  const handleDownloadClick = () => {
-    browser.tabs.create({ url: ENDPOINT })
-      .then(tab => {
-        setTimeout(() => {
-          if (tab.id != null) {
-            browser.tabs.sendMessage(tab.id, { action: 'extensionData', payload: getAllCollections() })
-              .catch(err => console.error("Error sending bookmarks:", err));
-          }
-        }, 2000);
-      })
-      .catch(err => console.error("Error opening endpoint:", err));
+  // CSV helpers
+  const escapeCsv = (value: string) => {
+    const needsQuotes = /[",\n]/.test(value);
+    const escaped = value.replace(/"/g, '""');
+    return needsQuotes ? `"${escaped}"` : escaped;
+  };
+
+  const inferMediaType = (platform: string, url: string): 'video' | 'pictures' | 'unknown' => {
+    if (platform === 'instagram') {
+      if (/\/reel\//.test(url)) return 'video';
+      if (/\/p\//.test(url)) return 'pictures';
+      return 'unknown';
+    }
+    if (platform === 'tiktok') return 'video';
+    return 'unknown';
   };
 
   const handleInstagramScrollAndCollect = async () => {
@@ -218,7 +221,7 @@ const Popup: React.FC = () => {
     }).catch(err => console.error("Error downloading CSV:", err));
   };
 
-  // New: download a detailed CSV with columns: Platform, Type, Handle, link
+  // New: download a detailed CSV with columns: Platform, Type, Handle, Media, link
   const downloadCollectionAsDetailedCsv = (platform: string, collectionName: string) => {
     const collectionsByPlatform = collectionStore.collections[platform];
     if (!collectionsByPlatform) return;
@@ -231,19 +234,17 @@ const Popup: React.FC = () => {
 
     const meta = getCollectionMeta(platform, collectionName) || { type: 'profile', handle: collectionName } as any;
 
-    const escapeCsv = (value: string) => {
-      const needsQuotes = /[",\n]/.test(value);
-      const escaped = value.replace(/"/g, '""');
-      return needsQuotes ? `"${escaped}"` : escaped;
-    };
-
-    const header = ["Platform", "Type", "Handle", "link"]; // keep exact casing per request
-    const rows = bookmarks.map(bm => [
-      platform,
-      meta.type,
-      meta.handle,
-      bm.url,
-    ]);
+    const header = ["Platform", "Type", "Handle", "Media", "link"]; // Type = collection kind; Media = video/pictures
+    const rows = bookmarks.map(bm => {
+      const media = inferMediaType(platform, bm.url);
+      return [
+        platform,
+        meta.type,
+        meta.handle,
+        media,
+        bm.url,
+      ];
+    });
 
     const csvContent = [header, ...rows]
       .map(row => row.map(col => escapeCsv(String(col))).join(","))
@@ -261,6 +262,54 @@ const Popup: React.FC = () => {
     }).catch(err => console.error("Error downloading detailed CSV:", err));
   };
 
+  // New: download one CSV aggregating ALL collections across platforms
+  const downloadAllCollectionsAsDetailedCsv = () => {
+    const all = collectionStore.collections;
+    const platforms = Object.keys(all);
+    if (platforms.length === 0) {
+      alert("No links to download.");
+      return;
+    }
+
+    const header = ["Platform", "Type", "Handle", "Media", "link"]; // Type = collection kind; Media = video/pictures
+    const rows: string[][] = [];
+    for (const platform of platforms) {
+      const platformCollections = all[platform];
+      for (const collectionName of Object.keys(platformCollections)) {
+        const bookmarks = platformCollections[collectionName] || [];
+        const meta = getCollectionMeta(platform, collectionName) || { type: 'profile', handle: collectionName } as any;
+        for (const bm of bookmarks) {
+          const media = inferMediaType(platform, bm.url);
+          rows.push([
+            platform,
+            String(meta.type),
+            String(meta.handle),
+            media,
+            bm.url,
+          ]);
+        }
+      }
+    }
+
+    if (rows.length === 0) {
+      alert("No links to download.");
+      return;
+    }
+
+    const csvContent = [header, ...rows]
+      .map(row => row.map(col => escapeCsv(String(col))).join(","))
+      .join("\n");
+
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const filename = `all-collections.data.csv`;
+    browser.downloads.download({
+      url,
+      filename,
+      saveAs: true
+    }).catch(err => console.error("Error downloading combined CSV:", err));
+  };
+
   return (
     <div className={isDarkMode ? "dark" : ""}>
       <div className="popup-container">
@@ -276,7 +325,7 @@ const Popup: React.FC = () => {
           <button onClick={toggleTheme} className="theme-toggle-button">
             {isDarkMode ? <Sun /> : <Moon />}
           </button>
-          <button onClick={handleDownloadClick} className="theme-toggle-button">
+          <button onClick={downloadAllCollectionsAsDetailedCsv} className="theme-toggle-button">
             <Download />
           </button>
           {/* Instagram Specific Controls */}
