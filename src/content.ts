@@ -84,8 +84,12 @@ function isOnTiktokFavoritesPage(): boolean {
   try {
     const u = new URL(location.href);
     if (!/\.tiktok\.com$/.test(u.hostname)) return false;
-    // Favorites tab lives on user profile pages. We can't read the visual tab selection reliably,
-    // but we can still scan DOM when favorites items are present.
+    // Detect the active tab more robustly
+    if (document.querySelector('[data-e2e="liked-tab"][aria-selected="true"]')) return false;
+    if (document.querySelector('[data-e2e="repost-tab"][aria-selected="true"]')) return false;
+    const favoritesSelected = document.querySelector('[data-e2e="favorites-tab"][aria-selected="true"]');
+    if (favoritesSelected) return true;
+    // Fallback: presence of favorites cards
     return document.querySelector('[data-e2e="favorites-item"]') != null;
   } catch {
     return false;

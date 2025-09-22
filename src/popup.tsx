@@ -37,6 +37,13 @@ const Popup: React.FC = () => {
 
   // Track TikTok active section from content script (favorites/liked/reposts/videos)
   const [tiktokSectionState, setTiktokSectionState] = React.useState<{ username: string; section: string } | null>(null);
+  // Track the active TikTok collection being populated so incremental events append to the same row
+  const tiktokActiveCollectionRef = React.useRef<{ name: string; type: 'bookmarks' | 'favorites' | 'liked' | 'reposts' | 'profile'; handle: string } | null>(null);
+  const tiktokPollIntervalRef = React.useRef<number | null>(null);
+  const isTikTokDomain = activeUrl.startsWith("https://www.tiktok.com");
+  const isInstagramDomain = activeUrl.startsWith("https://www.instagram.com");
+  const isVideoPage = tiktokVideoRegex.test(activeUrl);
+
   React.useEffect(() => {
     if (!activeUrl.startsWith('https://www.tiktok.com')) {
       setTiktokSectionState(null);
@@ -54,6 +61,44 @@ const Popup: React.FC = () => {
       })
       .catch(() => {});
   }, [activeUrl]);
+
+  // While scrolling on TikTok, poll the page every 1.5s for accumulated links
+  React.useEffect(() => {
+    if (!isTikTokDomain || !tiktokActiveCollectionRef.current) {
+      if (tiktokPollIntervalRef.current) {
+        window.clearInterval(tiktokPollIntervalRef.current);
+        tiktokPollIntervalRef.current = null;
+      }
+      return;
+    }
+    if (scrollStatus === 'idle') {
+      if (tiktokPollIntervalRef.current) {
+        window.clearInterval(tiktokPollIntervalRef.current);
+        tiktokPollIntervalRef.current = null;
+      }
+      return;
+    }
+    if (tiktokPollIntervalRef.current) return;
+    tiktokPollIntervalRef.current = window.setInterval(async () => {
+      try {
+        const tabs = await browser.tabs.query({ active: true, currentWindow: true });
+        const tabId = tabs[0]?.id;
+        if (tabId == null) return;
+        const response = await browser.tabs.sendMessage(tabId, { action: 'collectTiktokFavoritesLinks' }).catch(() => null) as any;
+        const links = (response?.links || []) as string[];
+        const active = tiktokActiveCollectionRef.current;
+        if (!active || !links || links.length === 0) return;
+        ensureCollection('tiktok', active.name, { type: active.type, handle: active.handle });
+        addBookmarksToCollection('tiktok', active.name, links);
+      } catch {}
+    }, 1500);
+    return () => {
+      if (tiktokPollIntervalRef.current) {
+        window.clearInterval(tiktokPollIntervalRef.current);
+        tiktokPollIntervalRef.current = null;
+      }
+    };
+  }, [scrollStatus, isTikTokDomain]);
 
   React.useEffect(() => {
     const handler = (message: any) => {
@@ -73,20 +118,26 @@ const Popup: React.FC = () => {
         if (!isTikTokDomain) return;
         const links: string[] = message.links || [];
         if (links.length === 0) return;
+        // Prefer the active collection chosen when the user clicked the button
+        const active = tiktokActiveCollectionRef.current;
+        if (active) {
+          ensureCollection('tiktok', active.name, { type: active.type, handle: active.handle });
+          addBookmarksToCollection('tiktok', active.name, links);
+          return;
+        }
+        // Fallback: compute a sane default based on URL
         const usernameMatch = activeUrl.match(/https:\/\/www\.tiktok\.com\/@([^/]+)/);
         const username = usernameMatch?.[1] || 'unsorted';
-        let collectionName = `${username}_favorites`;
-        ensureCollection('tiktok', collectionName, { type: 'favorites', handle: username });
-        addBookmarksToCollection('tiktok', collectionName, links);
+        const fallbackName = `${username}_favorites`;
+        ensureCollection('tiktok', fallbackName, { type: 'favorites', handle: username });
+        addBookmarksToCollection('tiktok', fallbackName, links);
       }
     };
     browser.runtime.onMessage.addListener(handler);
     return () => browser.runtime.onMessage.removeListener(handler);
   }, [activeUrl]);
 
-  const isTikTokDomain = activeUrl.startsWith("https://www.tiktok.com");
-  const isInstagramDomain = activeUrl.startsWith("https://www.instagram.com");
-  const isVideoPage = tiktokVideoRegex.test(activeUrl);
+  
 
   const extractInstagramCollectionName = (url: string) => {
     // Saved collections: use the saved folder name (e.g., all-posts, tech-memes)
@@ -268,6 +319,8 @@ const Popup: React.FC = () => {
     }
 
     // Ensure an empty row appears immediately
+    // Remember active collection for incremental appends
+    tiktokActiveCollectionRef.current = { name: collectionName, type: metaType, handle };
     ensureCollection('tiktok', collectionName, { type: metaType as any, handle });
 
     // Collect links now (on-demand scan)
