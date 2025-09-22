@@ -73,14 +73,22 @@ const Popup: React.FC = () => {
   };
 
   const getInstagramPageTitle = (url: string) => {
-    const savedPageMatch = url.match(/https:\/\/www\.instagram\.com\/([^/]+)\/saved\/([^/]+)\//);
+    // Saved page → show the saved folder name
+    const savedPageMatch = url.match(/https:\/\/www\.instagram\.com\/([^/]+)\/saved\/([^/]+)\/?/);
     if (savedPageMatch && savedPageMatch[2]) {
       return `Bookmarks: ${savedPageMatch[2]}`;
     }
-    const userPageMatch = url.match(/https:\/\/www\.instagram\.com\/([^/]+)\//);
-    if (userPageMatch && userPageMatch[1]) {
-      return `Page: ${userPageMatch[1]}`;
-    }
+    // Any profile-like page → show username next to label
+    try {
+      const u = new URL(url);
+      const firstSeg = u.pathname.split('/').filter(Boolean)[0];
+      if (firstSeg) {
+        return `Instagram Page: ${firstSeg}`;
+      }
+      const host = u.hostname.replace(/^www\./, '');
+      const path = u.pathname.replace(/\/$/, '');
+      if (path) return `Instagram Page: ${host}${path}`;
+    } catch {}
     return 'Instagram Page';
   };
 
