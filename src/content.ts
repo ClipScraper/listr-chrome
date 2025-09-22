@@ -25,6 +25,11 @@ type InstagramItem = { url: string; type: 'video' | 'pictures' };
 const collectedInstaLinks = new Set<string>();
 const collectedInstaItems: InstagramItem[] = [];
 
+/**
+ * Incremental TikTok favorites state
+ */
+const collectedTiktokFavLinks = new Set<string>();
+
 function toAbsoluteInstagramUrl(pathOrUrl: string): string | null {
   try {
     // Normalize and ensure trailing slash for consistency
@@ -72,6 +77,54 @@ function scanAndCollectInstagramLinks(logEach: boolean = true): InstagramItem[] 
     }
   });
   return newlyFound;
+}
+
+/**
+ * TikTok favorites scanning
+ * - Detects anchors under elements marked with data-e2e="favorites-item"
+ * - Also scans generic anchors for video URLs as a fallback
+ */
+function isOnTiktokFavoritesPage(): boolean {
+  try {
+    const u = new URL(location.href);
+    if (!/\.tiktok\.com$/.test(u.hostname)) return false;
+    // Favorites tab lives on user profile pages. We can't read the visual tab selection reliably,
+    // but we can still scan DOM when favorites items are present.
+    return document.querySelector('[data-e2e="favorites-item"]') != null;
+  } catch {
+    return false;
+  }
+}
+
+function scanAndCollectTiktokFavorites(logEach: boolean = false): string[] {
+  if (!/\.tiktok\.com$/.test(location.hostname)) return [];
+  const newly: string[] = [];
+
+  // Primary: favorites grid cards
+  document.querySelectorAll('[data-e2e="favorites-item"] a[href^="https://www.tiktok.com/"]').forEach((a: Element) => {
+    const href = (a as HTMLAnchorElement).href.split('?')[0];
+    if (/^https:\/\/www\.tiktok\.com\/[^/]+\/video\/\d+/.test(href)) {
+      if (!collectedTiktokFavLinks.has(href)) {
+        collectedTiktokFavLinks.add(href);
+        newly.push(href);
+        if (logEach) console.log('Added TikTok favorite:', href);
+      }
+    }
+  });
+
+  // Fallback: scan any anchors on page for video links (in case structure changes)
+  document.querySelectorAll('a[href^="https://www.tiktok.com/"]').forEach((a: Element) => {
+    const href = (a as HTMLAnchorElement).href.split('?')[0];
+    if (/^https:\/\/www\.tiktok\.com\/[^/]+\/video\/\d+/.test(href)) {
+      if (!collectedTiktokFavLinks.has(href)) {
+        collectedTiktokFavLinks.add(href);
+        newly.push(href);
+        if (logEach) console.log('Added TikTok video link (fallback):', href);
+      }
+    }
+  });
+
+  return newly;
 }
 
 /**
@@ -160,6 +213,9 @@ function doScrollStep() {
         .catch(() => {});
     } catch {}
   }
+
+  // Incremental TikTok favorites discovery on relevant pages
+  scanAndCollectTiktokFavorites(true);
 
   if (currentHeight > lastHeight) {
     lastHeight = currentHeight;
@@ -256,6 +312,28 @@ browser.runtime.onMessage.addListener((message: any, _sender: any, sendResponse:
   else if (message.action === "collectInstagramPostLinks") {
     const { links, items } = collectInstagramPostLinks();
     sendResponse({ links, items });
+  }
+  else if (message.action === "collectTiktokFavoritesLinks") {
+    const links = Array.from(collectedTiktokFavLinks);
+    sendResponse({ links });
+  }
+  else if (message.action === "detectTiktokSection") {
+    try {
+      const username = location.href.match(/\/(@[^/]+)/)?.[1]?.replace(/^@/, '') || '';
+      let section: 'favorites' | 'liked' | 'reposts' | 'videos' | 'unknown' = 'unknown';
+      if (document.querySelector('[data-e2e="liked-tab"][aria-selected="true"]')) section = 'liked';
+      else if (document.querySelector('[data-e2e="repost-tab"][aria-selected="true"]')) section = 'reposts';
+      else {
+        const selectedTabs = Array.from(document.querySelectorAll('[role="tab"][aria-selected="true"]')) as HTMLElement[];
+        const text = selectedTabs.map(n => (n.textContent || '').toLowerCase()).join(' ');
+        const classes = selectedTabs.map(n => n.className || '').join(' ');
+        if (/favorite/.test(text) || /PFavorite/i.test(classes)) section = 'favorites';
+        else if (/video|posts/.test(text)) section = 'videos';
+      }
+      sendResponse({ username, section });
+    } catch {
+      sendResponse({ username: '', section: 'unknown' });
+    }
   }
   else if (message.action === "ping") {
     sendResponse({ status: "pong" });

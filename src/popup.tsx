@@ -35,6 +35,26 @@ const Popup: React.FC = () => {
   const [isDarkMode, setIsDarkMode] = React.useState(false);
   const toggleTheme = () => setIsDarkMode(prev => !prev);
 
+  // Track TikTok active section from content script (favorites/liked/reposts/videos)
+  const [tiktokSectionState, setTiktokSectionState] = React.useState<{ username: string; section: string } | null>(null);
+  React.useEffect(() => {
+    if (!activeUrl.startsWith('https://www.tiktok.com')) {
+      setTiktokSectionState(null);
+      return;
+    }
+    browser.tabs.query({ active: true, currentWindow: true })
+      .then(tabs => {
+        const tabId = tabs[0]?.id;
+        if (tabId != null) {
+          return browser.tabs.sendMessage(tabId, { action: 'detectTiktokSection' });
+        }
+      })
+      .then(res => {
+        if (res) setTiktokSectionState(res as any);
+      })
+      .catch(() => {});
+  }, [activeUrl]);
+
   React.useEffect(() => {
     const handler = (message: any) => {
       if (message.type === 'instaNewLinks') {
@@ -115,6 +135,32 @@ const Popup: React.FC = () => {
     }
   };
 
+  const getTiktokPageTitle = (url: string) => {
+    const usernameMatch = url.match(/https:\/\/www\.tiktok\.com\/@([^/]+)/);
+    const username = usernameMatch?.[1];
+    const collectionMatch = url.match(/https:\/\/www\.tiktok\.com\/@[^/]+\/collection\/([^/?#]+)/);
+    // Try to ask content script which section is active
+    let sectionLabel = '';
+    // We won't await here; this function is called during render. We'll set a state from effect below
+    if (tiktokSectionState && username) {
+      if (tiktokSectionState.section === 'favorites') sectionLabel = ' Favorites';
+      else if (tiktokSectionState.section === 'liked') sectionLabel = ' Liked';
+      else if (tiktokSectionState.section === 'reposts') sectionLabel = ' Reposts';
+    }
+    if (collectionMatch && collectionMatch[1]) {
+      return `TikTok Collection: ${collectionMatch[1]}`;
+    }
+    if (username) return `TikTok Page: ${username}${sectionLabel}`;
+    try {
+      const u = new URL(url);
+      const host = u.hostname.replace(/^www\./, '');
+      const path = u.pathname.replace(/\/$/, '');
+      return `TikTok Page: ${host}${path}`;
+    } catch {
+      return 'TikTok Page';
+    }
+  };
+
   function onInstagramScrollComplete() {
     if (!isInstagramDomain) return;
     browser.tabs.query({ active: true, currentWindow: true })
@@ -172,6 +218,24 @@ const Popup: React.FC = () => {
         }
       })
       .catch(err => console.error("Error collecting video links:", err));
+  };
+
+  // TikTok favorites collect (unsorted)
+  const handleCollectTiktokFavorites = async () => {
+    const tabs = await browser.tabs.query({ active: true, currentWindow: true });
+    const tabId = tabs[0]?.id;
+    if (tabId == null) return;
+    const response = await browser.tabs.sendMessage(tabId, { action: 'collectTiktokFavoritesLinks' }).catch(() => null);
+    const links = (response && (response as any).links) as string[] | undefined;
+    if (!links || links.length === 0) return;
+
+    // Determine collection name and meta based on page URL
+    const usernameMatch = activeUrl.match(/https:\/\/www\.tiktok\.com\/@([^/]+)/);
+    const username = usernameMatch?.[1] || 'unknown';
+    const isCollection = /\/collection\//.test(activeUrl);
+    const collectionName = isCollection ? 'favorites_collection' : `${username}_favorites`;
+    ensureCollection('tiktok', collectionName, { type: 'favorites', handle: username });
+    addBookmarksToCollection('tiktok', collectionName, links);
   };
 
   // CSV helpers
@@ -365,12 +429,17 @@ const Popup: React.FC = () => {
             <Trash2 size={20} />
           </button>
           {/* Instagram Specific Controls */}
-          {isInstagramDomain && (
+          {(isInstagramDomain || isTikTokDomain) && (
             <div className="instagram-controls-section">
-              <h4>{getInstagramPageTitle(activeUrl)}</h4>
+              <h4>{isInstagramDomain ? getInstagramPageTitle(activeUrl) : getTiktokPageTitle(activeUrl)}</h4>
               <div className="instagram-buttons-row">
-                {scrollStatus === 'idle' && (
+                {scrollStatus === 'idle' && isInstagramDomain && (
                   <button onClick={handleInstagramScrollAndCollect} className="theme-toggle-button" style={{ transform: 'scaleX(-1)' }}>
+                    <ListTodo size={20} />
+                  </button>
+                )}
+                {scrollStatus === 'idle' && isTikTokDomain && (
+                  <button onClick={handleCollectTiktokFavorites} className="theme-toggle-button" title="Collect favorites">
                     <ListTodo size={20} />
                   </button>
                 )}
@@ -390,35 +459,7 @@ const Popup: React.FC = () => {
               </div>
             </div>
           )}
-          {isTikTokDomain && (
-            <>
-              {(!isVideoPage && !isSelecting && scrollStatus === 'idle') && (
-                <button onClick={startScrolling} className="btn">
-                  Start Scrolling
-                </button>
-              )}
-              {(!isVideoPage && !isSelecting && scrollStatus !== 'idle') && (
-                <button onClick={stopResumeScrolling} className="btn">
-                  {scrollStatus === 'scrolling' ? 'Stop' : 'Resume'}
-                </button>
-              )}
-              {isVideoPage && !isSelecting && (
-                <button onClick={handleBookmarkClick} className="btn">
-                  Bookmark
-                </button>
-              )}
-              {!isVideoPage && !isSelecting && (
-                <>
-                  <button onClick={handleBookmarkAll} className="btn">
-                    All
-                  </button>
-                  <button onClick={startSelectionMode} className="btn">
-                    Select
-                  </button>
-                </>
-              )}
-            </>
-          )}
+          {/* Removed redundant TikTok buttons (Start Scrolling / Favorites / All / Select) */}
           {isSelecting && (
             <>
               <button onClick={validateSelection} className="btn">
