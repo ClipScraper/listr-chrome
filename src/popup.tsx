@@ -69,6 +69,16 @@ const Popup: React.FC = () => {
           addBookmarksToCollection('instagram', collectionName, links);
         }
       }
+      if (message.type === 'tiktokNewLinks') {
+        if (!isTikTokDomain) return;
+        const links: string[] = message.links || [];
+        if (links.length === 0) return;
+        const usernameMatch = activeUrl.match(/https:\/\/www\.tiktok\.com\/@([^/]+)/);
+        const username = usernameMatch?.[1] || 'unsorted';
+        let collectionName = `${username}_favorites`;
+        ensureCollection('tiktok', collectionName, { type: 'favorites', handle: username });
+        addBookmarksToCollection('tiktok', collectionName, links);
+      }
     };
     browser.runtime.onMessage.addListener(handler);
     return () => browser.runtime.onMessage.removeListener(handler);
@@ -225,17 +235,56 @@ const Popup: React.FC = () => {
     const tabs = await browser.tabs.query({ active: true, currentWindow: true });
     const tabId = tabs[0]?.id;
     if (tabId == null) return;
-    const response = await browser.tabs.sendMessage(tabId, { action: 'collectTiktokFavoritesLinks' }).catch(() => null);
+    // Detect context (username + section)
+    const ctx = await browser.tabs.sendMessage(tabId, { action: 'detectTiktokSection' }).catch(() => null) as any;
+    const username = (ctx?.username || (activeUrl.match(/https:\/\/www\.tiktok\.com\/@([^/]+)/)?.[1])) || 'unknown';
+    const section = (ctx?.section as string) || 'favorites';
+    const collectionMatch = activeUrl.match(/https:\/\/www\.tiktok\.com\/@[^/]+\/collection\/([^/?#]+)/);
+
+    let collectionName: string;
+    let metaType: 'bookmarks' | 'favorites' | 'liked' | 'reposts' | 'profile' = 'bookmarks';
+    let handle: string = 'unsorted';
+
+    if (collectionMatch && collectionMatch[1]) {
+      // Named collection; use the slug before trailing id digits as handle
+      const slug = collectionMatch[1];
+      const pretty = slug.replace(/-[0-9]+$/, '');
+      collectionName = `collection_${username}_${pretty}`;
+      metaType = 'bookmarks';
+      handle = pretty || slug;
+    } else if (/liked/i.test(section)) {
+      collectionName = `${username}_liked`;
+      metaType = 'liked';
+      handle = username;
+    } else if (/reposts?/i.test(section)) {
+      collectionName = `${username}_reposts`;
+      metaType = 'reposts';
+      handle = username;
+    } else {
+      // favorites unsorted
+      collectionName = `unsorted`;
+      metaType = 'bookmarks';
+      handle = 'unsorted';
+    }
+
+    // Ensure an empty row appears immediately
+    ensureCollection('tiktok', collectionName, { type: metaType as any, handle });
+
+    // Collect links now (on-demand scan)
+    const response = await browser.tabs.sendMessage(tabId, { action: 'scanTiktokFavoritesOnce' }).catch(() => null);
     const links = (response && (response as any).links) as string[] | undefined;
     if (!links || links.length === 0) return;
-
-    // Determine collection name and meta based on page URL
-    const usernameMatch = activeUrl.match(/https:\/\/www\.tiktok\.com\/@([^/]+)/);
-    const username = usernameMatch?.[1] || 'unknown';
-    const isCollection = /\/collection\//.test(activeUrl);
-    const collectionName = isCollection ? 'favorites_collection' : `${username}_favorites`;
-    ensureCollection('tiktok', collectionName, { type: 'favorites', handle: username });
     addBookmarksToCollection('tiktok', collectionName, links);
+
+    // Start auto scrolling/listing cycle like Instagram
+    const isContentScriptReady = await pingContentScript(tabId);
+    if (!isContentScriptReady) {
+      alert("The content script is not active on this page. Please refresh and try again.");
+      return;
+    }
+    if (scrollStatus === 'idle') {
+      startScrolling();
+    }
   };
 
   // CSV helpers

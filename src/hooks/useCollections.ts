@@ -27,7 +27,7 @@ export interface CollectionStore {
 }
 
 export function useCollections() {
-  const [collectionStore, setCollectionStore] = useState<CollectionStore>({ collections: {}, meta: {} });
+  const [collectionStore, setCollectionStore] = useState<CollectionStore>({collections: {}, meta: {}});
 
   useEffect(() => {
     browser.storage.local.get('allCollections')
@@ -43,16 +43,12 @@ export function useCollections() {
   }, []);
 
   const saveCollections = (updatedStore: CollectionStore) => {
-    setCollectionStore(updatedStore);
+    // Persist only; state is already updated by the caller's setState
     browser.storage.local.set({ allCollections: updatedStore })
       .catch(err => console.error('Error saving collections:', err));
   };
 
-  const addBookmarksToCollection = (
-    platform: 'tiktok' | 'instagram' | 'other',
-    collectionName: string,
-    urls: string[]
-  ) => {
+  const addBookmarksToCollection = (platform: 'tiktok' | 'instagram' | 'other', collectionName: string, urls: string[]) => {
     if (!urls || urls.length === 0) return;
     setCollectionStore(prevStore => {
       const currentList = prevStore.collections[platform]?.[collectionName] || [];
@@ -84,23 +80,11 @@ export function useCollections() {
     });
   };
 
-  const ensureCollection = (
-    platform: 'tiktok' | 'instagram' | 'other',
-    collectionName: string,
-    meta?: CollectionMeta
-  ) => {
+  const ensureCollection = (platform: 'tiktok' | 'instagram' | 'other', collectionName: string, meta?: CollectionMeta) => {
     setCollectionStore(prevStore => {
       const platformCollections = prevStore.collections[platform] || {};
       const already = !!platformCollections[collectionName];
-      const updatedCollections = already
-        ? prevStore.collections
-        : {
-            ...prevStore.collections,
-            [platform]: {
-              ...platformCollections,
-              [collectionName]: [],
-            }
-          };
+      const updatedCollections = already ? prevStore.collections : {...prevStore.collections, [platform]: {...platformCollections, [collectionName]: []}};
       const updatedMeta = { ...(prevStore.meta || {}) } as NonNullable<CollectionStore['meta']>;
       if (!updatedMeta[platform]) updatedMeta[platform] = {};
       if (meta) {
@@ -147,13 +131,5 @@ export function useCollections() {
     return collectionStore.collections[platform] || {};
   };
 
-  return {
-    collectionStore,
-    addBookmarksToCollection,
-    ensureCollection,
-    deleteCollection,
-    getAllCollections,
-    getCollectionsByPlatform,
-    getCollectionMeta,
-  };
+  return {collectionStore, addBookmarksToCollection, ensureCollection, deleteCollection, getAllCollections, getCollectionsByPlatform, getCollectionMeta};
 }

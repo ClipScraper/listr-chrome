@@ -24,10 +24,6 @@ const selectedAnchors = new Set<HTMLAnchorElement>();
 type InstagramItem = { url: string; type: 'video' | 'pictures' };
 const collectedInstaLinks = new Set<string>();
 const collectedInstaItems: InstagramItem[] = [];
-
-/**
- * Incremental TikTok favorites state
- */
 const collectedTiktokFavLinks = new Set<string>();
 
 function toAbsoluteInstagramUrl(pathOrUrl: string): string | null {
@@ -215,7 +211,13 @@ function doScrollStep() {
   }
 
   // Incremental TikTok favorites discovery on relevant pages
-  scanAndCollectTiktokFavorites(true);
+  const newlyTk = scanAndCollectTiktokFavorites(true);
+  if (newlyTk.length > 0) {
+    try {
+      browser.runtime.sendMessage({ type: 'tiktokNewLinks', links: newlyTk })
+        .catch(() => {});
+    } catch {}
+  }
 
   if (currentHeight > lastHeight) {
     lastHeight = currentHeight;
@@ -315,6 +317,10 @@ browser.runtime.onMessage.addListener((message: any, _sender: any, sendResponse:
   }
   else if (message.action === "collectTiktokFavoritesLinks") {
     const links = Array.from(collectedTiktokFavLinks);
+    sendResponse({ links });
+  }
+  else if (message.action === "scanTiktokFavoritesOnce") {
+    const links = scanAndCollectTiktokFavorites(true);
     sendResponse({ links });
   }
   else if (message.action === "detectTiktokSection") {
