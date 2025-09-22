@@ -73,27 +73,46 @@ const Popup: React.FC = () => {
   };
 
   const getInstagramPageTitle = (url: string) => {
-    const savedPageMatch = url.match(/https:\/\/www\.instagram\.com\/([^/]+)\/saved\/([^/]+)\//);
+    // Saved page → show the saved folder name
+    const savedPageMatch = url.match(/https:\/\/www\.instagram\.com\/([^/]+)\/saved\/([^/]+)\/?/);
     if (savedPageMatch && savedPageMatch[2]) {
       return `Bookmarks: ${savedPageMatch[2]}`;
     }
-    const userPageMatch = url.match(/https:\/\/www\.instagram\.com\/([^/]+)\//);
-    if (userPageMatch && userPageMatch[1]) {
-      return `Page: ${userPageMatch[1]}`;
-    }
+    // Any profile-like page → show username next to label
+    try {
+      const u = new URL(url);
+      const firstSeg = u.pathname.split('/').filter(Boolean)[0];
+      if (firstSeg) {
+        return `Instagram Page: ${firstSeg}`;
+      }
+      const host = u.hostname.replace(/^www\./, '');
+      const path = u.pathname.replace(/\/$/, '');
+      if (path) return `Instagram Page: ${host}${path}`;
+    } catch {}
     return 'Instagram Page';
   };
 
   const getInstagramTypeAndHandle = (url: string) => {
+    // Saved collections → use the folder name
     const savedMatch = url.match(/https:\/\/www\.instagram\.com\/([^/]+)\/saved\/([^/]+)\//);
     if (savedMatch && savedMatch[2]) {
       return { type: 'bookmarks' as const, handle: savedMatch[2] };
     }
-    const userMatch = url.match(/https:\/\/www\.instagram\.com\/([^/]+)\//);
-    if (userMatch && userMatch[1]) {
-      return { type: 'profile' as const, handle: userMatch[1] };
+    try {
+      const u = new URL(url);
+      const firstSeg = u.pathname.split('/').filter(Boolean)[0];
+      if (firstSeg) {
+        // Profile or username-based pages → use the username
+        return { type: 'profile' as const, handle: firstSeg };
+      }
+      // Fallback → show readable page url instead of "unknown"
+      const host = u.hostname.replace(/^www\./, '');
+      const path = u.pathname.replace(/\/$/, '');
+      return { type: 'profile' as const, handle: `${host}${path}` };
+    } catch {
+      // Last resort: return the url without scheme/www
+      return { type: 'profile' as const, handle: url.replace(/^https?:\/\//, '').replace(/^www\./, '') };
     }
-    return { type: 'profile' as const, handle: 'unknown' };
   };
 
   function onInstagramScrollComplete() {
@@ -355,12 +374,19 @@ const Popup: React.FC = () => {
                     <ListTodo size={20} />
                   </button>
                 )}
-                <button
-                  onClick={scrollStatus === 'idle' ? handleInstagramScrollAndCollect : stopResumeScrolling}
-                  className="theme-toggle-button"
-                >
-                  {scrollStatus === 'scrolling' ? <Pause size={20} /> : <Play size={20} />}
-                </button>
+                {scrollStatus !== 'idle' && (
+                  <>
+                    <button
+                      onClick={stopResumeScrolling}
+                      className="theme-toggle-button"
+                    >
+                      {scrollStatus === 'scrolling' ? <Pause size={20} /> : <Play size={20} />}
+                    </button>
+                    <div className="scroll-timer" style={{ marginBottom: 0 }}>
+                      Time until next scroll: {timeRemaining} seconds
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           )}
@@ -405,12 +431,6 @@ const Popup: React.FC = () => {
           )}
         </div>
 
-        {scrollStatus !== 'idle' && (
-          <div className="scroll-timer">
-            Time until next scroll: {timeRemaining} seconds
-          </div>
-        )}
-
         {/* Collections Display Table */}
         <div className="collections-table-section">
           <h3>Saved Collections</h3>
@@ -442,13 +462,11 @@ const Popup: React.FC = () => {
                     <td>{getCollectionMeta(platform, colName)?.handle || colName}</td>
                     <td>{bookmarks.length}</td>
                     <td>
-                      <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}>
+                      <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center', justifyContent: 'center' }}>
                         <button onClick={() => deleteCollection(platform, colName)} className="theme-toggle-button" aria-label="Delete collection">
                           <Trash2 size={18} />
                         </button>
-                        <button onClick={() => downloadCollectionAsCsv(platform, colName)} className="theme-toggle-button" aria-label="Save collection">
-                          <Save size={20} />
-                        </button>
+                        {/* Removed floppy disk save button per request */}
                         <button onClick={() => downloadCollectionAsDetailedCsv(platform, colName)} className="theme-toggle-button" aria-label="Download data CSV">
                           <Download size={18} />
                         </button>
