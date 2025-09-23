@@ -112,6 +112,18 @@ body {
   margin-bottom: 0.25rem;
 }
 
+/* Cancel square button (solid black square) placed on the far right */
+.cancel-square-button {
+  width: 18px;
+  height: 18px;
+  background: #222;
+  border: none;
+  cursor: pointer;
+}
+.dark .cancel-square-button {
+  background: #111;
+}
+
 /* Bookmark list */
 .bookmark-list {
   margin-top: 0.25rem;
