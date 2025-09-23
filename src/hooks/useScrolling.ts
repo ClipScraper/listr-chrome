@@ -67,7 +67,21 @@ export function useScrolling(onScrollComplete?: () => void) {
       .catch(err => console.error("Error in stop/resume:", err));
   }
 
-  return { scrollStatus, timeRemaining, startScrolling, stopResumeScrolling, startInstagramScrolling };
+  function cancelScrolling() {
+    browser.tabs.query({ active: true, currentWindow: true })
+      .then(tabs => {
+        const tabId = tabs[0]?.id;
+        if (tabId == null) return;
+        return browser.tabs.sendMessage(tabId, { action: "stopScrolling" });
+      })
+      .finally(() => {
+        setScrollStatus('idle');
+        setTimeRemaining(0);
+      })
+      .catch(err => console.error("Error canceling scroll:", err));
+  }
+
+  return { scrollStatus, timeRemaining, startScrolling, stopResumeScrolling, startInstagramScrolling, cancelScrolling };
 }
 
 

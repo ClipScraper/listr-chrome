@@ -28,7 +28,7 @@ const tiktokVideoRegex = /^https:\/\/www\.tiktok\.com\/[^/]+\/(?:video|photo)\/\
 
 const Popup: React.FC = () => {
   const { activeUrl } = useActiveTab();
-  const { scrollStatus, timeRemaining, startScrolling, stopResumeScrolling, startInstagramScrolling } = useScrolling(onInstagramScrollComplete);
+  const { scrollStatus, timeRemaining, startScrolling, stopResumeScrolling, startInstagramScrolling, cancelScrolling } = useScrolling(onInstagramScrollComplete);
   const { collectionStore, addBookmarksToCollection, deleteCollection, getAllCollections, ensureCollection, getCollectionMeta } = useCollections();
   const { isSelecting, startSelectionMode, validateSelection, cancelSelection } = useSelectionMode((urls) => addBookmarksToCollection('tiktok', 'selected_tiktok_links', urls));
 
@@ -345,6 +345,17 @@ const Popup: React.FC = () => {
     }
   };
 
+  const handleCancelListing = () => {
+    // Stop the background scrolling job and reset UI state
+    cancelScrolling();
+    // Clear any active TikTok collection and polling interval so no more appends happen
+    tiktokActiveCollectionRef.current = null;
+    if (tiktokPollIntervalRef.current) {
+      window.clearInterval(tiktokPollIntervalRef.current);
+      tiktokPollIntervalRef.current = null;
+    }
+  };
+
   // CSV helpers
   const escapeCsv = (value: string) => {
     const needsQuotes = /[",\n]/.test(value);
@@ -564,6 +575,13 @@ const Popup: React.FC = () => {
                     <div className="scroll-timer" style={{ marginBottom: 0 }}>
                       Time until next scroll: {timeRemaining} seconds
                     </div>
+                    <button
+                      onClick={handleCancelListing}
+                      className="cancel-square-button"
+                      title="Cancel listing"
+                      style={{ marginLeft: 'auto' }}
+                      aria-label="Cancel listing"
+                    />
                   </>
                 )}
               </div>
