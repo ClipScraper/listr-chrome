@@ -84,6 +84,7 @@ function isOnTiktokFavoritesPage(): boolean {
   try {
     const u = new URL(location.href);
     if (!/\.tiktok\.com$/.test(u.hostname)) return false;
+    if (/\/collection\//.test(u.pathname)) return false;
     // Detect the active tab more robustly
     if (document.querySelector('[data-e2e="liked-tab"][aria-selected="true"]')) return false;
     if (document.querySelector('[data-e2e="repost-tab"][aria-selected="true"]')) return false;
@@ -96,30 +97,53 @@ function isOnTiktokFavoritesPage(): boolean {
   }
 }
 
+function isOnTiktokCollectionPage(): boolean {
+  try {
+    const u = new URL(location.href);
+    return /\/collection\//.test(u.pathname);
+  } catch {
+    return false;
+  }
+}
+
+function getTiktokCollectionRoot(): HTMLElement | null {
+  // TikTok collection pages render the grid under this container
+  return document.getElementById('main-content-collection');
+}
+
 function scanAndCollectTiktokFavorites(logEach: boolean = false): string[] {
   if (!/\.tiktok\.com$/.test(location.hostname)) return [];
   const newly: string[] = [];
 
-  // Primary: favorites grid cards
-  document.querySelectorAll('[data-e2e="favorites-item"] a[href^="https://www.tiktok.com/"]').forEach((a: Element) => {
-    const href = (a as HTMLAnchorElement).href.split('?')[0];
+  let selector = '';
+  if (isOnTiktokFavoritesPage()) {
+    selector = '[data-e2e="favorites-item"] a[href^="https://www.tiktok.com/"]';
+  } else if (isOnTiktokCollectionPage()) {
+    // Collection pages: grid cards do not have favorites-item; target the card container aria-label
+    selector = 'div[aria-label="Watch in full screen"] a[href^="https://www.tiktok.com/"]';
+  } else {
+    // Generic profile tabs (liked/reposts): use the visible grid card pattern
+    selector = 'div[aria-label="Watch in full screen"] a[href^="https://www.tiktok.com/"]';
+  }
+
+  // Constrain scope to the collection root when on a collection page to avoid
+  // picking up links from headers/popups (e.g., inbox) elsewhere in the DOM
+  const scopeEl: Document | Element = isOnTiktokCollectionPage() && getTiktokCollectionRoot()
+    ? (getTiktokCollectionRoot() as HTMLElement)
+    : document;
+
+  scopeEl.querySelectorAll(selector).forEach((a: Element) => {
+    const anchor = a as HTMLAnchorElement;
+    if (!anchor) return;
+    // Ensure element is visible in layout to avoid hidden sections
+    const isVisible = !!(anchor.offsetParent || (anchor as any).offsetWidth || (anchor as any).offsetHeight);
+    if (!isVisible) return;
+    const href = anchor.href.split('?')[0];
     if (/^https:\/\/www\.tiktok\.com\/[^/]+\/video\/\d+/.test(href)) {
       if (!collectedTiktokFavLinks.has(href)) {
         collectedTiktokFavLinks.add(href);
         newly.push(href);
         if (logEach) console.log('Added TikTok favorite:', href);
-      }
-    }
-  });
-
-  // Fallback: scan any anchors on page for video links (in case structure changes)
-  document.querySelectorAll('a[href^="https://www.tiktok.com/"]').forEach((a: Element) => {
-    const href = (a as HTMLAnchorElement).href.split('?')[0];
-    if (/^https:\/\/www\.tiktok\.com\/[^/]+\/video\/\d+/.test(href)) {
-      if (!collectedTiktokFavLinks.has(href)) {
-        collectedTiktokFavLinks.add(href);
-        newly.push(href);
-        if (logEach) console.log('Added TikTok video link (fallback):', href);
       }
     }
   });
@@ -322,6 +346,10 @@ browser.runtime.onMessage.addListener((message: any, _sender: any, sendResponse:
   else if (message.action === "collectTiktokFavoritesLinks") {
     const links = Array.from(collectedTiktokFavLinks);
     sendResponse({ links });
+  }
+  else if (message.action === "resetTiktokFavoritesState") {
+    collectedTiktokFavLinks.clear();
+    sendResponse({ status: 'cleared' });
   }
   else if (message.action === "scanTiktokFavoritesOnce") {
     const links = scanAndCollectTiktokFavorites(true);

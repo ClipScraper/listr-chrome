@@ -282,10 +282,13 @@ const Popup: React.FC = () => {
   };
 
   // TikTok favorites collect (unsorted)
+  // Listing button
   const handleCollectTiktokFavorites = async () => {
     const tabs = await browser.tabs.query({ active: true, currentWindow: true });
     const tabId = tabs[0]?.id;
     if (tabId == null) return;
+    // Start from a clean accumulator to avoid cross-page bleed
+    await browser.tabs.sendMessage(tabId, { action: 'resetTiktokFavoritesState' }).catch(() => null);
     // Detect context (username + section)
     const ctx = await browser.tabs.sendMessage(tabId, { action: 'detectTiktokSection' }).catch(() => null) as any;
     const username = (ctx?.username || (activeUrl.match(/https:\/\/www\.tiktok\.com\/@([^/]+)/)?.[1])) || 'unknown';
