@@ -128,8 +128,8 @@ const Popup: React.FC = () => {
         // Fallback: compute a sane default based on URL
         const usernameMatch = activeUrl.match(/https:\/\/www\.tiktok\.com\/@([^/]+)/);
         const username = usernameMatch?.[1] || 'unsorted';
-        const fallbackName = `${username}_favorites`;
-        ensureCollection('tiktok', fallbackName, { type: 'favorites', handle: username });
+        const fallbackName = `${username}_profile`;
+        ensureCollection('tiktok', fallbackName, { type: 'profile', handle: username });
         addBookmarksToCollection('tiktok', fallbackName, links);
       }
     };
@@ -308,6 +308,10 @@ const Popup: React.FC = () => {
       collectionName = `collection_${username}_${pretty}`;
       metaType = 'bookmarks';
       handle = pretty || slug;
+    } else if (/videos?/i.test(section)) {
+      collectionName = `${username}_profile`;
+      metaType = 'profile';
+      handle = username;
     } else if (/liked/i.test(section)) {
       collectionName = `${username}_liked`;
       metaType = 'liked';
