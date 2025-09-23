@@ -1,6 +1,6 @@
 import * as React from 'react';
 import * as ReactDOM from 'react-dom';
-import { Sun, Moon, Download, Ban, Save, ListTodo, Play, Pause, Trash2 } from 'lucide-react';
+import { Sun, Moon, Download, Ban, ListTodo, Play, Pause, Trash2 } from 'lucide-react';
 // import { LuListEnd } from 'react-icons/lu';
 import browser from 'webextension-polyfill';
 import { useActiveTab } from './hooks/useActiveTab';
@@ -209,7 +209,9 @@ const Popup: React.FC = () => {
       else if (tiktokSectionState.section === 'reposts') sectionLabel = ' Reposts';
     }
     if (collectionMatch && collectionMatch[1]) {
-      return `TikTok Collection: ${collectionMatch[1]}`;
+      const slug = decodeURIComponent(collectionMatch[1]);
+      const pretty = slug.replace(/-[0-9]+$/, '');
+      return `TikTok Collection: ${pretty}`;
     }
     if (username) return `TikTok Page: ${username}${sectionLabel}`;
     try {
