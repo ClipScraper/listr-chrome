@@ -139,7 +139,7 @@ function scanAndCollectTiktokFavorites(logEach: boolean = false): string[] {
     const isVisible = !!(anchor.offsetParent || (anchor as any).offsetWidth || (anchor as any).offsetHeight);
     if (!isVisible) return;
     const href = anchor.href.split('?')[0];
-    if (/^https:\/\/www\.tiktok\.com\/[^/]+\/video\/\d+/.test(href)) {
+    if (/^https:\/\/www\.tiktok\.com\/[^/]+\/(?:video|photo)\/\d+/.test(href)) {
       if (!collectedTiktokFavLinks.has(href)) {
         collectedTiktokFavLinks.add(href);
         newly.push(href);
