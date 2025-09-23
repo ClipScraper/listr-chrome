@@ -24,7 +24,7 @@ async function pingContentScript(tabId: number): Promise<boolean> {
   }
 }
 
-const tiktokVideoRegex = /^https:\/\/www\.tiktok\.com\/[^/]+\/[^/]+\/\d+/;
+const tiktokVideoRegex = /^https:\/\/www\.tiktok\.com\/[^/]+\/(?:video|photo)\/\d+/;
 
 const Popup: React.FC = () => {
   const { activeUrl } = useActiveTab();
@@ -356,7 +356,10 @@ const Popup: React.FC = () => {
       if (/\/p\//.test(url)) return 'pictures';
       return 'unknown';
     }
-    if (platform === 'tiktok') return 'video';
+    if (platform === 'tiktok') {
+      if(/\/photo\//.test(url)) return 'pictures';
+      return 'video';
+    }
     return 'unknown';
   };
 
