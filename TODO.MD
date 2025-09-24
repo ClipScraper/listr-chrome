@@ -1,1 +1,2 @@
-add cancel interrupt listing
+- support youtube
+- support pinterest

@@ -111,6 +111,18 @@ function getTiktokCollectionRoot(): HTMLElement | null {
   return document.getElementById('main-content-collection');
 }
 
+function getTiktokUserPostsRoot(): HTMLElement | null {
+  return document.querySelector('[data-e2e="user-post-item-list"]') as HTMLElement | null;
+}
+
+function getTiktokLikedRoot(): HTMLElement | null {
+  return document.querySelector('[data-e2e="user-liked-item-list"]') as HTMLElement | null;
+}
+
+function getTiktokRepostRoot(): HTMLElement | null {
+  return document.querySelector('[data-e2e="user-repost-item-list"]') as HTMLElement | null;
+}
+
 function scanAndCollectTiktokFavorites(logEach: boolean = false): string[] {
   if (!/\.tiktok\.com$/.test(location.hostname)) return [];
   const newly: string[] = [];
@@ -118,6 +130,15 @@ function scanAndCollectTiktokFavorites(logEach: boolean = false): string[] {
   let selector = '';
   if (isOnTiktokFavoritesPage()) {
     selector = '[data-e2e="favorites-item"] a[href^="https://www.tiktok.com/"]';
+  } else if (getTiktokLikedRoot()) {
+    // Liked tab grid
+    selector = 'a[href^="https://www.tiktok.com/"]';
+  } else if (getTiktokRepostRoot()) {
+    // Reposts tab grid
+    selector = 'a[href^="https://www.tiktok.com/"]';
+  } else if (getTiktokUserPostsRoot()) {
+    // Profile videos grid
+    selector = 'a[href^="https://www.tiktok.com/"]';
   } else if (isOnTiktokCollectionPage()) {
     // Collection pages: grid cards do not have favorites-item; target the card container aria-label
     selector = 'div[aria-label="Watch in full screen"] a[href^="https://www.tiktok.com/"]';
@@ -128,9 +149,15 @@ function scanAndCollectTiktokFavorites(logEach: boolean = false): string[] {
 
   // Constrain scope to the collection root when on a collection page to avoid
   // picking up links from headers/popups (e.g., inbox) elsewhere in the DOM
-  const scopeEl: Document | Element = isOnTiktokCollectionPage() && getTiktokCollectionRoot()
-    ? (getTiktokCollectionRoot() as HTMLElement)
-    : document;
+  const collectionRoot = getTiktokCollectionRoot();
+  const likedRoot = getTiktokLikedRoot();
+  const repostRoot = getTiktokRepostRoot();
+  const userPostsRoot = getTiktokUserPostsRoot();
+  const scopeEl: Document | Element = (isOnTiktokCollectionPage() && collectionRoot)
+    ? (collectionRoot as HTMLElement)
+    : (likedRoot ? likedRoot
+      : (repostRoot ? repostRoot
+        : (userPostsRoot ? userPostsRoot : document)));
 
   scopeEl.querySelectorAll(selector).forEach((a: Element) => {
     const anchor = a as HTMLAnchorElement;
