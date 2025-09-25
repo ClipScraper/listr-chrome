@@ -22,7 +22,11 @@
   ],
   "content_scripts": [
     {
-      "matches": ["https://www.tiktok.com/*", "https://www.instagram.com/*"],
+      "matches": [
+        "https://www.tiktok.com/*",
+        "https://www.instagram.com/*",
+        "https://www.youtube.com/*"
+      ],
       "js": ["dist/content.js"],
       "run_at": "document_end"
     }

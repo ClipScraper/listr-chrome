@@ -1,17 +1,15 @@
 import * as React from 'react';
 import * as ReactDOM from 'react-dom';
 import { Sun, Moon, Download, Ban, ListTodo, Play, Pause, Trash2 } from 'lucide-react';
-// import { LuListEnd } from 'react-icons/lu';
 import browser from 'webextension-polyfill';
 import { useActiveTab } from './hooks/useActiveTab';
 import { useScrolling } from './hooks/useScrolling';
 import { useSelectionMode } from './hooks/useSelectionMode';
-import { useCollections, Bookmark, CollectionStore } from './hooks/useCollections';
+import { useCollections } from './hooks/useCollections';
 import './styles/popup.css';
 import {
   extractInstagramCollectionName,
   getInstagramPageTitle as igGetInstagramPageTitle,
-  getInstagramTypeAndHandle as igGetInstagramTypeAndHandle,
   handleInstagramScrollAndCollect as iHandleInstagramScrollAndCollect,
   onInstagramScrollComplete as iOnInstagramScrollComplete,
 } from './apps/instagram/popup';
@@ -21,6 +19,7 @@ import {
   ActiveTikTokCollection,
   detectTiktokSectionOnActiveTab,
 } from './apps/tiktok/popup';
+import { getYouTubePageTitle } from './apps/youtube/popup';
 
 interface ContentScriptPingResponse {
   status: "pong";
@@ -37,8 +36,6 @@ async function pingContentScript(tabId: number): Promise<boolean> {
   }
 }
 
-// TikTok helpers moved to apps/tiktok/popup.ts
-
 const Popup: React.FC = () => {
   const { activeUrl } = useActiveTab();
   const { collectionStore, addBookmarksToCollection, deleteCollection, getAllCollections, ensureCollection, getCollectionMeta } = useCollections();
@@ -47,20 +44,23 @@ const Popup: React.FC = () => {
   const [isDarkMode, setIsDarkMode] = React.useState(false);
   const toggleTheme = () => setIsDarkMode(prev => !prev);
 
-  // Track TikTok active section from content script (favorites/liked/reposts/videos)
+  // TikTok section detection
   const [tiktokSectionState, setTiktokSectionState] = React.useState<{ username: string; section: string } | null>(null);
-  // Track the active TikTok collection being populated so incremental events append to the same row
   const tiktokActiveCollectionRef = React.useRef<{ name: string; type: 'bookmarks' | 'favorites' | 'liked' | 'reposts' | 'profile'; handle: string } | null>(null);
   const tiktokPollIntervalRef = React.useRef<number | null>(null);
+
   const isTikTokDomain = activeUrl.startsWith("https://www.tiktok.com");
   const isInstagramDomain = activeUrl.startsWith("https://www.instagram.com");
-  // moved: tiktokVideoRegex and isVideoPage usage
+  const isYouTubeDomain = activeUrl.startsWith("https://www.youtube.com"); // used for icon and header selection
+
+  const [youTubeTitle, setYouTubeTitle] = React.useState<string>(() => getYouTubePageTitle(activeUrl));
 
   const onInstaCompleteCb = React.useCallback(() => iOnInstagramScrollComplete({
     activeUrl,
     isInstagramDomain,
     addBookmarksToCollection,
   }), [activeUrl, isInstagramDomain]);
+
   const { scrollStatus, timeRemaining, startScrolling, stopResumeScrolling, startInstagramScrolling, cancelScrolling } = useScrolling(onInstaCompleteCb);
 
   React.useEffect(() => {
@@ -73,7 +73,65 @@ const Popup: React.FC = () => {
       .catch(() => {});
   }, [activeUrl]);
 
-  // While scrolling on TikTok, poll the page every 1.5s for accumulated links
+  // --- NEW: listen for pushes from the YouTube content script
+  React.useEffect(() => {
+    const onMsg = (message: any) => {
+      if (message?.type === 'ytChannelInfoPush') {
+        const info = message.payload || {};
+        const name = (info.name || '').trim();
+        const handle = (info.handle || '').trim();
+        if (name) {
+          setYouTubeTitle(`YouTube Channel: ${name}`);
+        } else if (handle) {
+          setYouTubeTitle(`YouTube Channel: ${handle}`);
+        }
+      }
+    };
+    browser.runtime.onMessage.addListener(onMsg);
+    return () => browser.runtime.onMessage.removeListener(onMsg);
+  }, []);
+
+  // Request YouTube channel info whenever we open the popup on a YouTube page
+  React.useEffect(() => {
+    // support all youtube TLDs (youtube.com, youtube.co.uk, etc.)
+    if (!/^https:\/\/www\.youtube\./.test(activeUrl)) return;
+
+    (async () => {
+      try {
+        console.log("[YT POPUP] effect start for", activeUrl);
+        const tabs = await browser.tabs.query({ active: true, currentWindow: true });
+        const tabId = tabs[0]?.id;
+        if (tabId == null) {
+          setYouTubeTitle(getYouTubePageTitle(activeUrl));
+          return;
+        }
+        console.log("[YT POPUP] sending ytGetChannelInfo → tab", tabId);
+        const res = await browser.tabs.sendMessage(tabId, { action: 'ytGetChannelInfo' })
+          .catch(err => {
+            console.warn("[YT POPUP] sendMessage error:", err);
+            return null;
+          }) as any;
+
+        console.log("[YT POPUP] response:", res);
+
+        const name = (res?.name || '').trim();
+        const handle = (res?.handle || '').trim();
+
+        if (name) {
+          setYouTubeTitle(`YouTube Channel: ${name}`);
+        } else if (handle) {
+          setYouTubeTitle(`YouTube Channel: ${handle}`);
+        } else {
+          setYouTubeTitle(getYouTubePageTitle(activeUrl));
+        }
+      } catch (e) {
+        console.warn("[YT POPUP] effect error:", e);
+        setYouTubeTitle(getYouTubePageTitle(activeUrl));
+      }
+    })();
+  }, [activeUrl]);
+
+  // While scrolling on TikTok, poll periodically for newly found links
   React.useEffect(() => {
     if (!isTikTokDomain || !tiktokActiveCollectionRef.current) {
       if (tiktokPollIntervalRef.current) {
@@ -114,7 +172,6 @@ const Popup: React.FC = () => {
   React.useEffect(() => {
     const handler = (message: any) => {
       if (message.type === 'instaNewLinks') {
-        // Determine active Instagram collection name and append incrementally
         if (!isInstagramDomain) return;
         let collectionName = extractInstagramCollectionName(activeUrl);
         if (activeUrl.includes('/saved/all-posts/')) {
@@ -129,14 +186,12 @@ const Popup: React.FC = () => {
         if (!isTikTokDomain) return;
         const links: string[] = message.links || [];
         if (links.length === 0) return;
-        // Prefer the active collection chosen when the user clicked the button
         const active = tiktokActiveCollectionRef.current;
         if (active) {
           ensureCollection('tiktok', active.name, { type: active.type, handle: active.handle });
           addBookmarksToCollection('tiktok', active.name, links);
           return;
         }
-        // Fallback: compute a sane default based on URL
         const usernameMatch = activeUrl.match(/https:\/\/www\.tiktok\.com\/@([^/]+)/);
         const username = usernameMatch?.[1] || 'unsorted';
         const fallbackName = `${username}_profile`;
@@ -147,20 +202,6 @@ const Popup: React.FC = () => {
     browser.runtime.onMessage.addListener(handler);
     return () => browser.runtime.onMessage.removeListener(handler);
   }, [activeUrl]);
-
-  
-
-  // moved: extractInstagramCollectionName is imported
-
-  // moved: getInstagramPageTitle is imported
-
-  // moved: getInstagramTypeAndHandle is imported
-
-  // moved: getTiktokPageTitle is imported
-
-  // moved: onInstagramScrollComplete is imported and passed via hook callback
-
-  // removed obsolete TikTok single bookmark helper
 
   const handleBookmarkAll = () => {
     browser.tabs.query({ active: true, currentWindow: true })
@@ -180,8 +221,6 @@ const Popup: React.FC = () => {
       .catch(err => console.error("Error collecting video links:", err));
   };
 
-  // TikTok favorites collect (unsorted)
-  // Listing button
   const handleCollectTiktokFavorites = React.useCallback(async () => {
     await collectTiktokFavoritesFlow({
       activeUrl,
@@ -195,9 +234,7 @@ const Popup: React.FC = () => {
   }, [activeUrl, ensureCollection, addBookmarksToCollection, pingContentScript, scrollStatus, startScrolling]);
 
   const handleCancelListing = () => {
-    // Stop the background scrolling job and reset UI state
     cancelScrolling();
-    // Clear any active TikTok collection and polling interval so no more appends happen
     tiktokActiveCollectionRef.current = null;
     if (tiktokPollIntervalRef.current) {
       window.clearInterval(tiktokPollIntervalRef.current);
@@ -232,30 +269,6 @@ const Popup: React.FC = () => {
     pingContentScript,
   }), [activeUrl, ensureCollection, startInstagramScrolling]);
 
-  const downloadCollectionAsCsv = (platform: string, collectionName: string) => {
-    const collectionsByPlatform = collectionStore.collections[platform];
-    if (!collectionsByPlatform) return;
-
-    const collectionLinks = collectionsByPlatform[collectionName];
-    if (!collectionLinks || collectionLinks.length === 0) {
-      alert("No links to download for this collection.");
-      return;
-    }
-
-    const csvContent = "Link\n" + collectionLinks.map(bm => bm.url).join("\n");
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-
-    const filename = `${platform}.${collectionName}.csv`;
-
-    browser.downloads.download({
-      url: url,
-      filename: filename,
-      saveAs: true
-    }).catch(err => console.error("Error downloading CSV:", err));
-  };
-
-  // New: download a detailed CSV with columns: Platform, Type, Handle, Media, link
   const downloadCollectionAsDetailedCsv = (platform: string, collectionName: string) => {
     const collectionsByPlatform = collectionStore.collections[platform];
     if (!collectionsByPlatform) return;
@@ -268,7 +281,7 @@ const Popup: React.FC = () => {
 
     const meta = getCollectionMeta(platform, collectionName) || { type: 'profile', handle: collectionName } as any;
 
-    const header = ["Platform", "Type", "Handle", "Media", "link"]; // Type = collection kind; Media = video/pictures
+    const header = ["Platform", "Type", "Handle", "Media", "link"];
     const rows = bookmarks.map(bm => {
       const media = inferMediaType(platform, bm.url);
       return [
@@ -296,7 +309,6 @@ const Popup: React.FC = () => {
     }).catch(err => console.error("Error downloading detailed CSV:", err));
   };
 
-  // New: download one CSV aggregating ALL collections across platforms
   const downloadAllCollectionsAsDetailedCsv = () => {
     const all = collectionStore.collections;
     const platforms = Object.keys(all);
@@ -305,7 +317,7 @@ const Popup: React.FC = () => {
       return;
     }
 
-    const header = ["Platform", "Type", "Handle", "Media", "link"]; // Type = collection kind; Media = video/pictures
+    const header = ["Platform", "Type", "Handle", "Media", "link"];
     const rows: string[][] = [];
     for (const platform of platforms) {
       const platformCollections = all[platform];
@@ -353,6 +365,8 @@ const Popup: React.FC = () => {
             <img src="assets/instagram.webp" alt="Instagram" width={20} height={20} />
           ) : isTikTokDomain ? (
             <img src="assets/tiktok.webp" alt="TikTok" width={20} height={20} />
+          ) : isYouTubeDomain ? (
+            <img src="assets/youtube.webp" alt="YouTube" width={20} height={20} />
           ) : (
             <Ban size={20} />
           )}
@@ -373,10 +387,14 @@ const Popup: React.FC = () => {
           }} className="theme-toggle-button" aria-label="Clear all collections">
             <Trash2 size={20} />
           </button>
-          {/* Instagram Specific Controls */}
-          {(isInstagramDomain || isTikTokDomain) && (
+
+          {(isInstagramDomain || isTikTokDomain || isYouTubeDomain) && (
             <div className="instagram-controls-section">
-              <h4>{isInstagramDomain ? igGetInstagramPageTitle(activeUrl) : iGetTiktokPageTitle(activeUrl, tiktokSectionState)}</h4>
+              <h4>{isInstagramDomain
+                ? igGetInstagramPageTitle(activeUrl)
+                : (isTikTokDomain
+                  ? iGetTiktokPageTitle(activeUrl, tiktokSectionState)
+                  : youTubeTitle)}</h4>
               <div className="instagram-buttons-row">
                 {scrollStatus === 'idle' && isInstagramDomain && (
                   <button onClick={handleInstagramScrollAndCollect} className="theme-toggle-button" style={{ transform: 'scaleX(-1)' }}>
@@ -411,7 +429,7 @@ const Popup: React.FC = () => {
               </div>
             </div>
           )}
-          {/* Removed redundant TikTok buttons (Start Scrolling / Favorites / All / Select) */}
+
           {isSelecting && (
             <>
               <button onClick={validateSelection} className="btn">
@@ -459,7 +477,6 @@ const Popup: React.FC = () => {
                         <button onClick={() => deleteCollection(platform, colName)} className="theme-toggle-button" aria-label="Delete collection">
                           <Trash2 size={18} />
                         </button>
-                        {/* Removed floppy disk save button per request */}
                         <button onClick={() => downloadCollectionAsDetailedCsv(platform, colName)} className="theme-toggle-button" aria-label="Download data CSV">
                           <Download size={18} />
                         </button>
@@ -478,5 +495,3 @@ const Popup: React.FC = () => {
 };
 
 ReactDOM.render(<Popup />, document.getElementById('root'));
-
-
