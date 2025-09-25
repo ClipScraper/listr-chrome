@@ -1,2 +1,4 @@
 - support youtube
 - support pinterest
+- instagram story?
+- name collection file when downloading

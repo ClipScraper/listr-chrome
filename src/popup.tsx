@@ -8,6 +8,19 @@ import { useScrolling } from './hooks/useScrolling';
 import { useSelectionMode } from './hooks/useSelectionMode';
 import { useCollections, Bookmark, CollectionStore } from './hooks/useCollections';
 import './styles/popup.css';
+import {
+  extractInstagramCollectionName,
+  getInstagramPageTitle as igGetInstagramPageTitle,
+  getInstagramTypeAndHandle as igGetInstagramTypeAndHandle,
+  handleInstagramScrollAndCollect as iHandleInstagramScrollAndCollect,
+  onInstagramScrollComplete as iOnInstagramScrollComplete,
+} from './apps/instagram/popup';
+import {
+  getTiktokPageTitle as iGetTiktokPageTitle,
+  collectTiktokFavoritesFlow,
+  ActiveTikTokCollection,
+  detectTiktokSectionOnActiveTab,
+} from './apps/tiktok/popup';
 
 interface ContentScriptPingResponse {
   status: "pong";
@@ -24,11 +37,10 @@ async function pingContentScript(tabId: number): Promise<boolean> {
   }
 }
 
-const tiktokVideoRegex = /^https:\/\/www\.tiktok\.com\/[^/]+\/(?:video|photo)\/\d+/;
+// TikTok helpers moved to apps/tiktok/popup.ts
 
 const Popup: React.FC = () => {
   const { activeUrl } = useActiveTab();
-  const { scrollStatus, timeRemaining, startScrolling, stopResumeScrolling, startInstagramScrolling, cancelScrolling } = useScrolling(onInstagramScrollComplete);
   const { collectionStore, addBookmarksToCollection, deleteCollection, getAllCollections, ensureCollection, getCollectionMeta } = useCollections();
   const { isSelecting, startSelectionMode, validateSelection, cancelSelection } = useSelectionMode((urls) => addBookmarksToCollection('tiktok', 'selected_tiktok_links', urls));
 
@@ -42,23 +54,22 @@ const Popup: React.FC = () => {
   const tiktokPollIntervalRef = React.useRef<number | null>(null);
   const isTikTokDomain = activeUrl.startsWith("https://www.tiktok.com");
   const isInstagramDomain = activeUrl.startsWith("https://www.instagram.com");
-  const isVideoPage = tiktokVideoRegex.test(activeUrl);
+  // moved: tiktokVideoRegex and isVideoPage usage
+
+  const onInstaCompleteCb = React.useCallback(() => iOnInstagramScrollComplete({
+    activeUrl,
+    isInstagramDomain,
+    addBookmarksToCollection,
+  }), [activeUrl, isInstagramDomain]);
+  const { scrollStatus, timeRemaining, startScrolling, stopResumeScrolling, startInstagramScrolling, cancelScrolling } = useScrolling(onInstaCompleteCb);
 
   React.useEffect(() => {
-    if (!activeUrl.startsWith('https://www.tiktok.com')) {
+    if (!isTikTokDomain) {
       setTiktokSectionState(null);
       return;
     }
-    browser.tabs.query({ active: true, currentWindow: true })
-      .then(tabs => {
-        const tabId = tabs[0]?.id;
-        if (tabId != null) {
-          return browser.tabs.sendMessage(tabId, { action: 'detectTiktokSection' });
-        }
-      })
-      .then(res => {
-        if (res) setTiktokSectionState(res as any);
-      })
+    detectTiktokSectionOnActiveTab()
+      .then(res => { if (res) setTiktokSectionState(res as any); })
       .catch(() => {});
   }, [activeUrl]);
 
@@ -139,131 +150,17 @@ const Popup: React.FC = () => {
 
   
 
-  const extractInstagramCollectionName = (url: string) => {
-    // Saved collections: use the saved folder name (e.g., all-posts, tech-memes)
-    const savedMatch = url.match(/https:\/\/www\.instagram\.com\/([^/]+)\/saved\/([^/]+)\//);
-    if (savedMatch && savedMatch[2]) {
-      return savedMatch[2];
-    }
-    // Profile or reels pages: use the username as the collection key
-    const profileMatch = url.match(/https:\/\/www\.instagram\.com\/([^/]+)\/(?:reels\/)?/);
-    if (profileMatch && profileMatch[1]) {
-      return profileMatch[1];
-    }
-    return 'my_collection';
-  };
+  // moved: extractInstagramCollectionName is imported
 
-  const getInstagramPageTitle = (url: string) => {
-    // Saved page → show the saved folder name
-    const savedPageMatch = url.match(/https:\/\/www\.instagram\.com\/([^/]+)\/saved\/([^/]+)\/?/);
-    if (savedPageMatch && savedPageMatch[2]) {
-      return `Bookmarks: ${savedPageMatch[2]}`;
-    }
-    // Any profile-like page → show username next to label
-    try {
-      const u = new URL(url);
-      const firstSeg = u.pathname.split('/').filter(Boolean)[0];
-      if (firstSeg) {
-        return `Instagram Page: ${firstSeg}`;
-      }
-      const host = u.hostname.replace(/^www\./, '');
-      const path = u.pathname.replace(/\/$/, '');
-      if (path) return `Instagram Page: ${host}${path}`;
-    } catch {}
-    return 'Instagram Page';
-  };
+  // moved: getInstagramPageTitle is imported
 
-  const getInstagramTypeAndHandle = (url: string) => {
-    // Saved collections → use the folder name
-    const savedMatch = url.match(/https:\/\/www\.instagram\.com\/([^/]+)\/saved\/([^/]+)\//);
-    if (savedMatch && savedMatch[2]) {
-      return { type: 'bookmarks' as const, handle: savedMatch[2] };
-    }
-    try {
-      const u = new URL(url);
-      const firstSeg = u.pathname.split('/').filter(Boolean)[0];
-      if (firstSeg) {
-        // Profile or username-based pages → use the username
-        return { type: 'profile' as const, handle: firstSeg };
-      }
-      // Fallback → show readable page url instead of "unknown"
-      const host = u.hostname.replace(/^www\./, '');
-      const path = u.pathname.replace(/\/$/, '');
-      return { type: 'profile' as const, handle: `${host}${path}` };
-    } catch {
-      // Last resort: return the url without scheme/www
-      return { type: 'profile' as const, handle: url.replace(/^https?:\/\//, '').replace(/^www\./, '') };
-    }
-  };
+  // moved: getInstagramTypeAndHandle is imported
 
-  const getTiktokPageTitle = (url: string) => {
-    const usernameMatch = url.match(/https:\/\/www\.tiktok\.com\/@([^/]+)/);
-    const username = usernameMatch?.[1];
-    const collectionMatch = url.match(/https:\/\/www\.tiktok\.com\/@[^/]+\/collection\/([^/?#]+)/);
-    // Try to ask content script which section is active
-    let sectionLabel = '';
-    // We won't await here; this function is called during render. We'll set a state from effect below
-    if (tiktokSectionState && username) {
-      if (tiktokSectionState.section === 'favorites') sectionLabel = ' Favorites';
-      else if (tiktokSectionState.section === 'liked') sectionLabel = ' Liked';
-      else if (tiktokSectionState.section === 'reposts') sectionLabel = ' Reposts';
-    }
-    if (collectionMatch && collectionMatch[1]) {
-      const slug = decodeURIComponent(collectionMatch[1]);
-      const pretty = slug.replace(/-[0-9]+$/, '');
-      return `TikTok Collection: ${pretty}`;
-    }
-    if (username) return `TikTok Page: ${username}${sectionLabel}`;
-    try {
-      const u = new URL(url);
-      const host = u.hostname.replace(/^www\./, '');
-      const path = u.pathname.replace(/\/$/, '');
-      return `TikTok Page: ${host}${path}`;
-    } catch {
-      return 'TikTok Page';
-    }
-  };
+  // moved: getTiktokPageTitle is imported
 
-  function onInstagramScrollComplete() {
-    if (!isInstagramDomain) return;
-    browser.tabs.query({ active: true, currentWindow: true })
-      .then(tabs => {
-        const tabId = tabs[0]?.id;
-        if (tabId != null) {
-          return browser.tabs.sendMessage(tabId, { action: "collectInstagramPostLinks" });
-        }
-      })
-      .then((response: any) => {
-        if (!response || !response.links) {
-          console.log("No links received from content script or response is invalid.", response);
-          return;
-        }
-        console.log("Received Instagram links from content script:", response.links);
+  // moved: onInstagramScrollComplete is imported and passed via hook callback
 
-        let collectionName = extractInstagramCollectionName(activeUrl);
-        if (activeUrl.includes('/saved/all-posts/')) {
-          collectionName = 'all-posts';
-        } else {
-          const promptName = prompt("Enter a name for this collection:", collectionName);
-          if (promptName) {
-            collectionName = promptName;
-          } else {
-            return; // User cancelled prompt
-          }
-        }
-
-        addBookmarksToCollection('instagram', collectionName, response.links);
-      })
-      .catch(err => console.error("Error collecting Instagram links:", err));
-  }
-
-  const handleBookmarkClick = () => {
-    if (!isVideoPage) {
-      alert("Not a valid TikTok video page.");
-      return;
-    }
-    addBookmarksToCollection('tiktok', 'single_bookmarks', [activeUrl]);
-  };
+  // removed obsolete TikTok single bookmark helper
 
   const handleBookmarkAll = () => {
     browser.tabs.query({ active: true, currentWindow: true })
@@ -285,69 +182,17 @@ const Popup: React.FC = () => {
 
   // TikTok favorites collect (unsorted)
   // Listing button
-  const handleCollectTiktokFavorites = async () => {
-    const tabs = await browser.tabs.query({ active: true, currentWindow: true });
-    const tabId = tabs[0]?.id;
-    if (tabId == null) return;
-    // Start from a clean accumulator to avoid cross-page bleed
-    await browser.tabs.sendMessage(tabId, { action: 'resetTiktokFavoritesState' }).catch(() => null);
-    // Detect context (username + section)
-    const ctx = await browser.tabs.sendMessage(tabId, { action: 'detectTiktokSection' }).catch(() => null) as any;
-    const username = (ctx?.username || (activeUrl.match(/https:\/\/www\.tiktok\.com\/@([^/]+)/)?.[1])) || 'unknown';
-    const section = (ctx?.section as string) || 'favorites';
-    const collectionMatch = activeUrl.match(/https:\/\/www\.tiktok\.com\/@[^/]+\/collection\/([^/?#]+)/);
-
-    let collectionName: string;
-    let metaType: 'bookmarks' | 'favorites' | 'liked' | 'reposts' | 'profile' = 'bookmarks';
-    let handle: string = 'unsorted';
-
-    if (collectionMatch && collectionMatch[1]) {
-      // Named collection; use the slug before trailing id digits as handle
-      const slug = collectionMatch[1];
-      const pretty = slug.replace(/-[0-9]+$/, '');
-      collectionName = `collection_${username}_${pretty}`;
-      metaType = 'bookmarks';
-      handle = pretty || slug;
-    } else if (/videos?/i.test(section)) {
-      collectionName = `${username}_profile`;
-      metaType = 'profile';
-      handle = username;
-    } else if (/liked/i.test(section)) {
-      collectionName = `${username}_liked`;
-      metaType = 'liked';
-      handle = username;
-    } else if (/reposts?/i.test(section)) {
-      collectionName = `${username}_reposts`;
-      metaType = 'reposts';
-      handle = username;
-    } else {
-      // favorites unsorted
-      collectionName = `unsorted`;
-      metaType = 'bookmarks';
-      handle = 'unsorted';
-    }
-
-    // Ensure an empty row appears immediately
-    // Remember active collection for incremental appends
-    tiktokActiveCollectionRef.current = { name: collectionName, type: metaType, handle };
-    ensureCollection('tiktok', collectionName, { type: metaType as any, handle });
-
-    // Collect links now (on-demand scan)
-    const response = await browser.tabs.sendMessage(tabId, { action: 'scanTiktokFavoritesOnce' }).catch(() => null);
-    const links = (response && (response as any).links) as string[] | undefined;
-    if (!links || links.length === 0) return;
-    addBookmarksToCollection('tiktok', collectionName, links);
-
-    // Start auto scrolling/listing cycle like Instagram
-    const isContentScriptReady = await pingContentScript(tabId);
-    if (!isContentScriptReady) {
-      alert("The content script is not active on this page. Please refresh and try again.");
-      return;
-    }
-    if (scrollStatus === 'idle') {
-      startScrolling();
-    }
-  };
+  const handleCollectTiktokFavorites = React.useCallback(async () => {
+    await collectTiktokFavoritesFlow({
+      activeUrl,
+      ensureCollection: (platform, name, meta) => ensureCollection(platform, name, meta as any),
+      addBookmarksToCollection,
+      setActiveCollection: (active: ActiveTikTokCollection | null) => { tiktokActiveCollectionRef.current = active; },
+      pingContentScript,
+      scrollStatus,
+      startScrolling,
+    });
+  }, [activeUrl, ensureCollection, addBookmarksToCollection, pingContentScript, scrollStatus, startScrolling]);
 
   const handleCancelListing = () => {
     // Stop the background scrolling job and reset UI state
@@ -380,37 +225,12 @@ const Popup: React.FC = () => {
     return 'unknown';
   };
 
-  const handleInstagramScrollAndCollect = async () => {
-    if (isInstagramDomain && scrollStatus === 'idle') {
-      const tabs = await browser.tabs.query({ active: true, currentWindow: true });
-      const tabId = tabs[0]?.id;
-      if (tabId == null) {
-        console.error("No active tab found.");
-        return;
-      }
-
-      // Ping the content script before starting to scroll
-      const isContentScriptReady = await pingContentScript(tabId);
-      if (!isContentScriptReady) {
-        console.error("Content script is not ready. Cannot start scrolling.");
-        alert("The content script is not active on this page. Please refresh the page and try again.");
-        return;
-      }
-
-      // Ensure an empty collection is visible immediately
-      let collectionName = extractInstagramCollectionName(activeUrl);
-      if (activeUrl.includes('/saved/all-posts/')) {
-        collectionName = 'all-posts';
-      }
-      const meta = getInstagramTypeAndHandle(activeUrl);
-      ensureCollection('instagram', collectionName, { type: meta.type, handle: meta.handle });
-
-      // Add a small delay to ensure content script is ready
-      setTimeout(() => {
-        startInstagramScrolling();
-      }, 500);
-    }
-  };
+  const handleInstagramScrollAndCollect = React.useCallback(() => iHandleInstagramScrollAndCollect({
+    activeUrl,
+    ensureCollection,
+    startInstagramScrolling,
+    pingContentScript,
+  }), [activeUrl, ensureCollection, startInstagramScrolling]);
 
   const downloadCollectionAsCsv = (platform: string, collectionName: string) => {
     const collectionsByPlatform = collectionStore.collections[platform];
@@ -556,7 +376,7 @@ const Popup: React.FC = () => {
           {/* Instagram Specific Controls */}
           {(isInstagramDomain || isTikTokDomain) && (
             <div className="instagram-controls-section">
-              <h4>{isInstagramDomain ? getInstagramPageTitle(activeUrl) : getTiktokPageTitle(activeUrl)}</h4>
+              <h4>{isInstagramDomain ? igGetInstagramPageTitle(activeUrl) : iGetTiktokPageTitle(activeUrl, tiktokSectionState)}</h4>
               <div className="instagram-buttons-row">
                 {scrollStatus === 'idle' && isInstagramDomain && (
                   <button onClick={handleInstagramScrollAndCollect} className="theme-toggle-button" style={{ transform: 'scaleX(-1)' }}>
