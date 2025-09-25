@@ -1,4 +1,5 @@
 import browser from 'webextension-polyfill';
+import { initYouTubeContent } from './apps/youtube/content';
 
 console.log("Content script loaded.");
 
@@ -311,76 +312,74 @@ function collectInstagramPostLinks(): { links: string[]; items: InstagramItem[] 
 /**
  * Single message listener
  */
-browser.runtime.onMessage.addListener((message: any, _sender: any, sendResponse: any) => {
+// REPLACE the existing browser.runtime.onMessage.addListener(...) in src/content.ts with this:
+
+browser.runtime.onMessage.addListener((message: any) => {
+  // IMPORTANT: do not intercept YouTube channel query here — let apps/youtube/content.ts handle it.
+  if (message.action === "ytGetChannelInfo") return undefined;
+
   if (message.action === "startScrolling") {
     initScrollVars();
     startScrolling();
-    sendResponse({ status: "Scrolling started" });
-  } 
+    return { status: "Scrolling started" };
+  }
   else if (message.action === "stopScrolling") {
     stopScrolling();
-    sendResponse({ status: "Scrolling stopped" });
+    return { status: "Scrolling stopped" };
   }
   else if (message.action === "resumeScrolling") {
     startScrolling();
-    sendResponse({ status: "Scrolling resumed" });
+    return { status: "Scrolling resumed" };
   }
   else if (message.action === "scrollToBottom") {
     scrollToBottom();
-    sendResponse({ status: "Scrolling once" });
+    return { status: "Scrolling once" };
   }
   else if (message.action === "collectAllVideoLinks") {
-    // "Bookmark All" approach
-    const allLinks = Array.from(document.querySelectorAll<HTMLAnchorElement>("a"));
-    const matched = allLinks
+    const allLinks = Array.from(document.querySelectorAll<HTMLAnchorElement>("a"))
       .map(a => a.href)
       .filter(href => /^https:\/\/www\.tiktok\.com\/[^/]+\/video\/\d+/.test(href));
-    sendResponse({ links: matched });
+    return { links: allLinks };
   }
-  // NEW: selection mode
   else if (message.action === "startSelectionMode") {
     selectionMode = true;
-    // clear old selection
     selectedAnchors.forEach(a => a.classList.remove('my-ext-selected'));
     selectedAnchors.clear();
-    sendResponse({ status: "Selection mode started" });
+    return { status: "Selection mode started" };
   }
   else if (message.action === "validateSelection") {
-    // gather href from selected anchors
     const links = Array.from(selectedAnchors).map(a => a.href);
-    // remove overlays
     selectedAnchors.forEach(a => a.classList.remove('my-ext-selected'));
     selectedAnchors.clear();
     selectionMode = false;
-    sendResponse({ status: "Selection validated", links });
+    return { status: "Selection validated", links };
   }
   else if (message.action === "cancelSelection") {
-    // remove overlays
     selectedAnchors.forEach(a => a.classList.remove('my-ext-selected'));
     selectedAnchors.clear();
     selectionMode = false;
-    sendResponse({ status: "Selection canceled" });
+    return { status: "Selection canceled" };
   }
   else if (message.action === "startInstagramScrolling") {
     initScrollVars();
     startScrolling();
-    sendResponse({ status: "Instagram scrolling started" });
+    return { status: "Instagram scrolling started" };
   }
   else if (message.action === "collectInstagramPostLinks") {
     const { links, items } = collectInstagramPostLinks();
-    sendResponse({ links, items });
+    return { links, items };
   }
   else if (message.action === "collectTiktokFavoritesLinks") {
     const links = Array.from(collectedTiktokFavLinks);
-    sendResponse({ links });
+    return { links };
   }
   else if (message.action === "resetTiktokFavoritesState") {
     collectedTiktokFavLinks.clear();
-    sendResponse({ status: 'cleared' });
+    return { status: 'cleared' };
   }
   else if (message.action === "scanTiktokFavoritesOnce") {
     const links = scanAndCollectTiktokFavorites(true);
-    sendResponse({ links });
+    return { links };
   }
   else if (message.action === "detectTiktokSection") {
     try {
@@ -395,16 +394,15 @@ browser.runtime.onMessage.addListener((message: any, _sender: any, sendResponse:
         if (/favorite/.test(text) || /PFavorite/i.test(classes)) section = 'favorites';
         else if (/video|posts/.test(text)) section = 'videos';
       }
-      sendResponse({ username, section });
+      return { username, section };
     } catch {
-      sendResponse({ username: '', section: 'unknown' });
+      return { username: '', section: 'unknown' };
     }
   }
   else if (message.action === "ping") {
-    sendResponse({ status: "pong" });
+    return { status: "pong" };
   }
-
-  return true;
+  return undefined;
 });
 
 browser.runtime.onMessage.addListener((message: any) => {
@@ -414,3 +412,5 @@ browser.runtime.onMessage.addListener((message: any) => {
 });
 
 
+// Initialize optional app integrations
+try { initYouTubeContent(); } catch {}

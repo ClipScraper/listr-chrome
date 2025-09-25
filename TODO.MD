@@ -1,4 +1,7 @@
 - support youtube
 - support pinterest
-- instagram story?
+- support twitter
+- instagram & tiktok story?
 - name collection file when downloading
+- suport é in names tiktok collection
+- button to open app when clicking button to dl list
