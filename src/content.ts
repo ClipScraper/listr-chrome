@@ -264,6 +264,7 @@ function doScrollStep() {
       browser.runtime.sendMessage({ type: 'instaNewLinks', links: newly.map(n => n.url) })
         .catch(() => {});
     } catch {}
+
   }
 
   // Incremental TikTok favorites discovery on relevant pages
@@ -310,107 +311,128 @@ function collectInstagramPostLinks(): { links: string[]; items: InstagramItem[] 
 }
 
 /**
- * Single message listener
+ * Primary message listener.
  */
-// REPLACE the existing browser.runtime.onMessage.addListener(...) in src/content.ts with this:
-
-browser.runtime.onMessage.addListener((message: any) => {
-  // IMPORTANT: do not intercept YouTube channel query here — let apps/youtube/content.ts handle it.
-  if (message.action === "ytGetChannelInfo") return undefined;
-
-  if (message.action === "startScrolling") {
-    initScrollVars();
-    startScrolling();
-    return { status: "Scrolling started" };
-  }
-  else if (message.action === "stopScrolling") {
-    stopScrolling();
-    return { status: "Scrolling stopped" };
-  }
-  else if (message.action === "resumeScrolling") {
-    startScrolling();
-    return { status: "Scrolling resumed" };
-  }
-  else if (message.action === "scrollToBottom") {
-    scrollToBottom();
-    return { status: "Scrolling once" };
-  }
-  else if (message.action === "collectAllVideoLinks") {
-    const allLinks = Array.from(document.querySelectorAll<HTMLAnchorElement>("a"))
-      .map(a => a.href)
-      .filter(href => /^https:\/\/www\.tiktok\.com\/[^/]+\/video\/\d+/.test(href));
-    return { links: allLinks };
-  }
-  else if (message.action === "startSelectionMode") {
-    selectionMode = true;
-    selectedAnchors.forEach(a => a.classList.remove('my-ext-selected'));
-    selectedAnchors.clear();
-    return { status: "Selection mode started" };
-  }
-  else if (message.action === "validateSelection") {
-    const links = Array.from(selectedAnchors).map(a => a.href);
-    selectedAnchors.forEach(a => a.classList.remove('my-ext-selected'));
-    selectedAnchors.clear();
-    selectionMode = false;
-    return { status: "Selection validated", links };
-  }
-  else if (message.action === "cancelSelection") {
-    selectedAnchors.forEach(a => a.classList.remove('my-ext-selected'));
-    selectedAnchors.clear();
-    selectionMode = false;
-    return { status: "Selection canceled" };
-  }
-  else if (message.action === "startInstagramScrolling") {
-    initScrollVars();
-    startScrolling();
-    return { status: "Instagram scrolling started" };
-  }
-  else if (message.action === "collectInstagramPostLinks") {
-    const { links, items } = collectInstagramPostLinks();
-    return { links, items };
-  }
-  else if (message.action === "collectTiktokFavoritesLinks") {
-    const links = Array.from(collectedTiktokFavLinks);
-    return { links };
-  }
-  else if (message.action === "resetTiktokFavoritesState") {
-    collectedTiktokFavLinks.clear();
-    return { status: 'cleared' };
-  }
-  else if (message.action === "scanTiktokFavoritesOnce") {
-    const links = scanAndCollectTiktokFavorites(true);
-    return { links };
-  }
-  else if (message.action === "detectTiktokSection") {
-    try {
-      const username = location.href.match(/\/(@[^/]+)/)?.[1]?.replace(/^@/, '') || '';
-      let section: 'favorites' | 'liked' | 'reposts' | 'videos' | 'unknown' = 'unknown';
-      if (document.querySelector('[data-e2e="liked-tab"][aria-selected="true"]')) section = 'liked';
-      else if (document.querySelector('[data-e2e="repost-tab"][aria-selected="true"]')) section = 'reposts';
-      else {
-        const selectedTabs = Array.from(document.querySelectorAll('[role="tab"][aria-selected="true"]')) as HTMLElement[];
-        const text = selectedTabs.map(n => (n.textContent || '').toLowerCase()).join(' ');
-        const classes = selectedTabs.map(n => n.className || '').join(' ');
-        if (/favorite/.test(text) || /PFavorite/i.test(classes)) section = 'favorites';
-        else if (/video|posts/.test(text)) section = 'videos';
-      }
-      return { username, section };
-    } catch {
-      return { username: '', section: 'unknown' };
-    }
-  }
-  else if (message.action === "ping") {
-    return { status: "pong" };
-  }
-  return undefined;
-});
-
-browser.runtime.onMessage.addListener((message: any) => {
-  if (message.action === 'extensionData') {
+browser.runtime.onMessage.addListener(async (message: any, _sender: any) => {
+  // Handle 'extensionData' message (previously in a separate listener)
+  if (message?.action === 'extensionData') {
     window.postMessage({ source: 'myExtension', payload: message.payload }, '*');
+    // No response needed for this action
+    return;
   }
+
+  // Use a promise to handle sendResponse, which is required for async listeners.
+  return new Promise(resolve => {
+    try {
+      if (message?.action === 'ytGetChannelInfo') {
+        // Let the YouTube-specific listener handle this.
+        // Resolve with no value to indicate we are not handling it here.
+        resolve(undefined);
+        return;
+      }
+
+      switch (message?.action) {
+        case 'startScrolling':
+          initScrollVars();
+          startScrolling();
+          resolve({ status: 'Scrolling started' });
+          break;
+        case 'stopScrolling':
+          stopScrolling();
+          resolve({ status: 'Scrolling stopped' });
+          break;
+        case 'resumeScrolling':
+          startScrolling();
+          resolve({ status: 'Scrolling resumed' });
+          break;
+        case 'scrollToBottom':
+          scrollToBottom();
+          resolve({ status: 'Scrolling once' });
+          break;
+        case 'collectAllVideoLinks': {
+          const allLinks = Array.from(document.querySelectorAll<HTMLAnchorElement>('a'))
+            .map(a => a.href)
+            .filter(href => /^https:\/\/www\.tiktok\.com\/[^/]+\/video\/\d+/.test(href));
+          resolve({ links: allLinks });
+          break;
+        }
+        case 'startSelectionMode':
+          selectionMode = true;
+          selectedAnchors.forEach(a => a.classList.remove('my-ext-selected'));
+          selectedAnchors.clear();
+          resolve({ status: 'Selection mode started' });
+          break;
+        case 'validateSelection': {
+          const links = Array.from(selectedAnchors).map(a => a.href);
+          selectedAnchors.forEach(a => a.classList.remove('my-ext-selected'));
+          selectedAnchors.clear();
+          selectionMode = false;
+          resolve({ status: 'Selection validated', links });
+          break;
+        }
+        case 'cancelSelection':
+          selectedAnchors.forEach(a => a.classList.remove('my-ext-selected'));
+          selectedAnchors.clear();
+          selectionMode = false;
+          resolve({ status: 'Selection canceled' });
+          break;
+        case 'startInstagramScrolling':
+          initScrollVars();
+          startScrolling();
+          resolve({ status: 'Instagram scrolling started' });
+          break;
+        case 'collectInstagramPostLinks': {
+          const { links, items } = collectInstagramPostLinks();
+          resolve({ links, items });
+          break;
+        }
+        case 'collectTiktokFavoritesLinks': {
+          const links = Array.from(collectedTiktokFavLinks);
+          resolve({ links });
+          break;
+        }
+        case 'resetTiktokFavoritesState':
+          collectedTiktokFavLinks.clear();
+          resolve({ status: 'cleared' });
+          break;
+        case 'scanTiktokFavoritesOnce': {
+          const links = scanAndCollectTiktokFavorites(true);
+          resolve({ links });
+          break;
+        }
+        case 'detectTiktokSection': {
+          try {
+            const username = location.href.match(/\/(@[^/]+)/)?.[1]?.replace(/^@/, '') || '';
+            let section: 'favorites' | 'liked' | 'reposts' | 'videos' | 'unknown' = 'unknown';
+            if (document.querySelector('[data-e2e="liked-tab"][aria-selected="true"]')) section = 'liked';
+            else if (document.querySelector('[data-e2e="repost-tab"][aria-selected="true"]')) section = 'reposts';
+            else {
+              const selectedTabs = Array.from(document.querySelectorAll('[role="tab"][aria-selected="true"]')) as HTMLElement[];
+              const text = selectedTabs.map(n => (n.textContent || '').toLowerCase()).join(' ');
+              const classes = selectedTabs.map(n => n.className || '').join(' ');
+              if (/favorite/.test(text) || /PFavorite/i.test(classes)) section = 'favorites';
+              else if (/video|posts/.test(text)) section = 'videos';
+            }
+            resolve({ username, section });
+          } catch {
+            resolve({ username: '', section: 'unknown' });
+          }
+          break;
+        }
+        case 'ping':
+          resolve({ status: 'pong' });
+          break;
+        default:
+          // Unhandled action: resolve with undefined to let other listeners try.
+          resolve(undefined);
+          break;
+      }
+    } catch (e) {
+      resolve({ error: String(e) });
+    }
+  });
 });
 
 
-// Initialize optional app integrations
+// Initialize optional app integrations (safe on non-YouTube hosts)
 try { initYouTubeContent(); } catch {}
