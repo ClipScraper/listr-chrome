@@ -51,6 +51,18 @@ export function useScrolling(onScrollComplete?: () => void) {
       .catch(err => console.error("Error starting Instagram scroll:", err));
   }
 
+  function startYouTubeScrolling() {
+    browser.tabs.query({ active: true, currentWindow: true })
+      .then(tabs => {
+        const tabId = tabs[0]?.id;
+        if (tabId != null) {
+          return browser.tabs.sendMessage(tabId, { action: "startYouTubeScrolling" });
+        }
+      })
+      .then(() => setScrollStatus('scrolling'))
+      .catch(err => console.error("Error starting YouTube scroll:", err));
+  }
+
   function stopResumeScrolling() {
     browser.tabs.query({ active: true, currentWindow: true })
       .then(tabs => {
@@ -81,7 +93,7 @@ export function useScrolling(onScrollComplete?: () => void) {
       .catch(err => console.error("Error canceling scroll:", err));
   }
 
-  return { scrollStatus, timeRemaining, startScrolling, stopResumeScrolling, startInstagramScrolling, cancelScrolling };
+  return { scrollStatus, timeRemaining, startScrolling, stopResumeScrolling, startInstagramScrolling, startYouTubeScrolling, cancelScrolling };
 }
 
 
