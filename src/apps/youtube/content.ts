@@ -7,9 +7,12 @@ export function initYouTubeContent() {
     let name = '';
     let handle = '';
 
-    // Handle from URL like /@handle
-    const urlHandle = location.pathname.match(/\/(@[A-Za-z0-9._-]+)/);
-    if (urlHandle) handle = urlHandle[1];
+    // Handle from URL like /@handle, /c/handle, or /channel/id
+    const urlMatch = location.pathname.match(/^\/(@[^/]+)|\/c\/([^/]+)|\/channel\/([^/]+)/);
+    const handleFromUrl = urlMatch ? urlMatch[1] || urlMatch[2] || urlMatch[3] : null;
+    if (handleFromUrl) {
+      handle = handleFromUrl;
+    }
 
     // Channel page header
     const nameEl =
@@ -45,8 +48,40 @@ export function initYouTubeContent() {
 
   // Answer explicit requests
   browser.runtime.onMessage.addListener((message: any) => {
-    if (message?.action !== 'ytGetChannelInfo') return;
-    return extractChannelInfo(); // polyfill will resolve this as a response
+    if (message?.action === 'ytGetChannelInfo') {
+      return Promise.resolve(extractChannelInfo());
+    }
+
+    if (message?.action === 'youtube_scrapeVideos') {
+      const videos: { url:string; title:string }[] = [];
+      const videoSelectors = [
+        'ytd-rich-item-renderer',
+        'ytd-video-renderer',
+        'ytd-grid-video-renderer',
+        'ytd-compact-video-renderer',
+      ];
+      const videoElements = document.querySelectorAll(videoSelectors.join(', '));
+
+      videoElements.forEach(el => {
+        const anchor = el.querySelector(
+          'a#thumbnail, a.yt-lockup-view-model__content-image, a.ytd-thumbnail'
+        ) as HTMLAnchorElement;
+        const titleEl = el.querySelector(
+          '#video-title, .yt-lockup-metadata-view-model__title'
+        ) as HTMLElement;
+
+        if (anchor?.href && titleEl?.innerText) {
+          const url = new URL(anchor.href, location.origin).toString();
+          const title = titleEl.innerText.trim();
+          if (!videos.some(v => v.url === url)) {
+            videos.push({ url, title });
+          }
+        }
+      });
+
+      const channelInfo = extractChannelInfo();
+      return Promise.resolve({ videos, channelName: channelInfo.name || channelInfo.handle });
+    }
   });
 
   // Push updates when DOM changes

@@ -6,3 +6,4 @@
 - name collection file when downloading
 - suport é in names tiktok collection
 - button to open app when clicking button to dl list
+- youtube, need button scrape and button scrape+scroll
