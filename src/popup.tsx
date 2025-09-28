@@ -1,6 +1,6 @@
 import * as React from 'react';
 import * as ReactDOM from 'react-dom';
-import { Sun, Moon, Download, Ban, ListTodo, Play, Pause, Trash2 } from 'lucide-react';
+import { Sun, Moon, Download, Ban, ListTodo, Play, Pause, Trash2, Plus } from 'lucide-react';
 import browser from 'webextension-polyfill';
 import { useActiveTab } from './hooks/useActiveTab';
 import { useScrolling } from './hooks/useScrolling';
@@ -52,6 +52,7 @@ const Popup: React.FC = () => {
   const isTikTokDomain = activeUrl.startsWith("https://www.tiktok.com");
   const isInstagramDomain = activeUrl.startsWith("https://www.instagram.com");
   const isYouTubeDomain = activeUrl.startsWith("https://www.youtube.com"); // used for icon and header selection
+  const isYouTubeVideoPage = isYouTubeDomain && activeUrl.includes('/watch?v=');
 
   const [youTubeTitle, setYouTubeTitle] = React.useState<string>(() => getYouTubePageTitle(activeUrl));
 
@@ -272,6 +273,30 @@ const Popup: React.FC = () => {
     pingContentScript,
   }), [activeUrl, ensureCollection, startInstagramScrolling]);
 
+  const handleYouTubeAddVideo = async () => {
+    try {
+      const tabs = await browser.tabs.query({ active: true, currentWindow: true });
+      const tabId = tabs[0]?.id;
+      if (!tabId) return;
+
+      const res = await browser.tabs.sendMessage(tabId, { action: 'ytGetChannelInfo' }) as { name: string; handle: string };
+      const channelName = (res?.name || res?.handle || '').trim();
+
+      if (!channelName) {
+        alert("Could not determine the channel for this video.");
+        return;
+      }
+
+      const collectionName = `${channelName}_videos`;
+      ensureCollection('youtube', collectionName, { type: 'video', handle: channelName });
+      addBookmarksToCollection('youtube', collectionName, [activeUrl]);
+
+    } catch (err) {
+      console.error("Error adding YouTube video:", err);
+      alert("An error occurred while adding the video.");
+    }
+  };
+
   const handleYouTubeListVideos = async () => {
     try {
       const tabs = await browser.tabs.query({ active: true, currentWindow: true });
@@ -442,9 +467,14 @@ const Popup: React.FC = () => {
                     <ListTodo size={20} />
                   </button>
                 )}
-                {scrollStatus === 'idle' && isYouTubeDomain && (
+                {scrollStatus === 'idle' && isYouTubeDomain && !isYouTubeVideoPage && (
                   <button onClick={handleYouTubeListVideos} className="theme-toggle-button" title="List videos on this page">
                     <ListTodo size={20} />
+                  </button>
+                )}
+                {scrollStatus === 'idle' && isYouTubeVideoPage && (
+                  <button onClick={handleYouTubeAddVideo} className="theme-toggle-button" title="Add this video to collections">
+                    <Plus size={20} />
                   </button>
                 )}
                 {scrollStatus !== 'idle' && (
