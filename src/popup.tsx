@@ -53,6 +53,7 @@ const Popup: React.FC = () => {
   const isInstagramDomain = activeUrl.startsWith("https://www.instagram.com");
   const isYouTubeDomain = activeUrl.startsWith("https://www.youtube.com"); // used for icon and header selection
   const isYouTubeVideoPage = isYouTubeDomain && activeUrl.includes('/watch?v=');
+  const isYouTubePlaylistPage = isYouTubeDomain && activeUrl.includes('/playlist?list=');
   const isYouTubeChannelPage = isYouTubeDomain && (
     activeUrl.includes('/videos') || activeUrl.includes('/shorts') || activeUrl.includes('/streams')
   );
@@ -206,20 +207,26 @@ const Popup: React.FC = () => {
         if (!isYouTubeDomain) return;
         const links: string[] = message.links || [];
         if (links.length > 0) {
-          // You might need a more robust way to get the current collection name
-          // For now, let's assume it's based on the channel name
           (async () => {
             try {
               const tabs = await browser.tabs.query({ active: true, currentWindow: true });
               const tabId = tabs[0]?.id;
               if (!tabId) return;
-              
-              const res = await browser.tabs.sendMessage(tabId, { action: 'ytGetChannelInfo' }) as { name: string; handle: string };
-              const channelName = (res?.name || res?.handle || '').trim();
 
-              if (channelName) {
-                const collectionName = `${channelName}_videos`;
-                addBookmarksToCollection('youtube', collectionName, links);
+              if (isYouTubePlaylistPage) {
+                const res = await browser.tabs.sendMessage(tabId, { action: 'ytGetPlaylistInfo' }) as { playlistName: string };
+                const playlistName = res?.playlistName.trim();
+                if (playlistName) {
+                  const collectionName = `${playlistName}_playlist`;
+                  addBookmarksToCollection('youtube', collectionName, links);
+                }
+              } else {
+                const res = await browser.tabs.sendMessage(tabId, { action: 'ytGetChannelInfo' }) as { name: string; handle: string };
+                const channelName = (res?.name || res?.handle || '').trim();
+                if (channelName) {
+                  const collectionName = `${channelName}_videos`;
+                  addBookmarksToCollection('youtube', collectionName, links);
+                }
               }
             } catch {}
           })();
@@ -324,6 +331,26 @@ const Popup: React.FC = () => {
   };
 
   const handleYouTubeListVideos = async () => {
+    if (isYouTubePlaylistPage) {
+      try {
+        const tabs = await browser.tabs.query({ active: true, currentWindow: true });
+        const tabId = tabs[0]?.id;
+        if (!tabId) return;
+
+        const res = await browser.tabs.sendMessage(tabId, { action: 'ytGetPlaylistInfo' }) as { playlistName: string };
+        const playlistName = res?.playlistName.trim();
+
+        if (playlistName) {
+          const collectionName = `${playlistName}_playlist`;
+          ensureCollection('youtube', collectionName, { type: 'playlist', handle: playlistName });
+        }
+        startYouTubeScrolling();
+      } catch (err) {
+        console.error("Error starting YouTube playlist scroll:", err);
+      }
+      return;
+    }
+
     if (isYouTubeChannelPage) {
       // Start scrolling and collecting
       try {
@@ -488,13 +515,13 @@ const Popup: React.FC = () => {
               <div className="instagram-buttons-row">
                 {scrollStatus === 'idle' && isInstagramDomain && (<button onClick={handleInstagramScrollAndCollect} className="theme-toggle-button" style={{ transform: 'scaleX(-1)' }}><ListTodo size={20} /></button>)}
                 {scrollStatus === 'idle' && isTikTokDomain && (<button onClick={handleCollectTiktokFavorites} className="theme-toggle-button" title="Collect favorites"><ListTodo size={20} /></button>)}
-                {scrollStatus === 'idle' && isYouTubeDomain && !isYouTubeVideoPage && !isYouTubeChannelPage && (
+                {scrollStatus === 'idle' && isYouTubeDomain && !isYouTubeVideoPage && !isYouTubeChannelPage && !isYouTubePlaylistPage && (
                   <button onClick={handleYouTubeListVideos} className="theme-toggle-button" title="List videos on this page">
                     <ListTodo size={20} />
                   </button>
                 )}
-                {scrollStatus === 'idle' && isYouTubeChannelPage && (
-                  <button onClick={handleYouTubeListVideos} className="theme-toggle-button" title="List all videos from channel">
+                {scrollStatus === 'idle' && (isYouTubeChannelPage || isYouTubePlaylistPage) && (
+                  <button onClick={handleYouTubeListVideos} className="theme-toggle-button" title="List all videos">
                     <ListTodo size={20} />
                   </button>
                 )}

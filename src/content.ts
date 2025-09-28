@@ -94,6 +94,7 @@ function scanAndCollectYouTubeVideos(logEach: boolean = false): string[] {
     'ytd-grid-video-renderer',
     'ytd-compact-video-renderer',
     'ytd-rich-grid-media',
+    'ytd-playlist-video-renderer',
   ];
   const videoElements = document.querySelectorAll(videoSelectors.join(', '));
 
