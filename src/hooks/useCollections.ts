@@ -9,7 +9,7 @@ export interface Bookmark {
 }
 
 export interface CollectionMeta {
-  type: 'bookmarks' | 'profile' | 'favorites' | 'liked' | 'reposts' | 'recommendation' | 'video';
+  type: 'bookmarks' | 'profile' | 'favorites' | 'liked' | 'reposts' | 'recommendation' | 'video' | 'playlist';
   handle: string; // collection name for bookmarks, username for profile
 }
 

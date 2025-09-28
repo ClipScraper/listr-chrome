@@ -46,10 +46,20 @@ export function initYouTubeContent() {
     return { name, handle };
   }
 
+  function extractPlaylistInfo() {
+    const playlistNameEl = document.querySelector('ytd-playlist-header-renderer yt-formatted-string#text');
+    const playlistName = playlistNameEl?.textContent?.trim() || '';
+    return { playlistName };
+  }
+
   // Answer explicit requests
   browser.runtime.onMessage.addListener((message: any) => {
     if (message?.action === 'ytGetChannelInfo') {
       return Promise.resolve(extractChannelInfo());
+    }
+
+    if (message?.action === 'ytGetPlaylistInfo') {
+      return Promise.resolve(extractPlaylistInfo());
     }
 
     if (message?.action === 'youtube_scrapeVideos') {
@@ -59,6 +69,7 @@ export function initYouTubeContent() {
         'ytd-video-renderer',
         'ytd-grid-video-renderer',
         'ytd-compact-video-renderer',
+        'ytd-playlist-video-renderer',
       ];
       const videoElements = document.querySelectorAll(videoSelectors.join(', '));
 
