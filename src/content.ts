@@ -3,6 +3,14 @@ import { initYouTubeContent } from './apps/youtube/content';
 
 console.log("Content script loaded.");
 
+// Respond to ping immediately using callback form for maximum compatibility
+browser.runtime.onMessage.addListener((message: any) => {
+  if (message && message.action === 'ping') {
+    return { status: 'pong' };
+  }
+  return undefined; // let other listeners handle
+});
+
 /**
  * SCROLLING STATES (unchanged from your code)
  */
@@ -74,6 +82,36 @@ function scanAndCollectInstagramLinks(logEach: boolean = true): InstagramItem[] 
     }
   });
   return newlyFound;
+}
+
+const collectedYouTubeLinks = new Set<string>();
+function scanAndCollectYouTubeVideos(logEach: boolean = false): string[] {
+  if (!/\.youtube\./.test(location.hostname)) return [];
+  const newly: string[] = [];
+  const videoSelectors = [
+    'ytd-rich-item-renderer',
+    'ytd-video-renderer',
+    'ytd-grid-video-renderer',
+    'ytd-compact-video-renderer',
+    'ytd-rich-grid-media',
+  ];
+  const videoElements = document.querySelectorAll(videoSelectors.join(', '));
+
+  videoElements.forEach(el => {
+    const anchor = el.querySelector(
+      'a#thumbnail, a.yt-lockup-view-model__content-image, a.ytd-thumbnail'
+    ) as HTMLAnchorElement;
+    
+    if (anchor?.href) {
+      const url = new URL(anchor.href, location.origin).toString();
+      if (!collectedYouTubeLinks.has(url)) {
+        collectedYouTubeLinks.add(url);
+        newly.push(url);
+        if (logEach) console.log('Added YouTube video:', url);
+      }
+    }
+  });
+  return newly;
 }
 
 /**
@@ -276,6 +314,15 @@ function doScrollStep() {
     } catch {}
   }
 
+  // Incremental YouTube channel video discovery
+  const newlyYt = scanAndCollectYouTubeVideos(true);
+  if (newlyYt.length > 0) {
+    try {
+      browser.runtime.sendMessage({ type: 'youtubeNewLinks', links: newlyYt })
+        .catch(() => {});
+    } catch {}
+  }
+
   if (currentHeight > lastHeight) {
     lastHeight = currentHeight;
     lastChangeTime = Date.now();
@@ -381,6 +428,11 @@ browser.runtime.onMessage.addListener(async (message: any, _sender: any) => {
           startScrolling();
           resolve({ status: 'Instagram scrolling started' });
           break;
+        case 'startYouTubeScrolling':
+          initScrollVars();
+          startScrolling();
+          resolve({ status: 'YouTube scrolling started' });
+          break;
         case 'collectInstagramPostLinks': {
           const { links, items } = collectInstagramPostLinks();
           resolve({ links, items });
@@ -395,6 +447,11 @@ browser.runtime.onMessage.addListener(async (message: any, _sender: any) => {
           collectedTiktokFavLinks.clear();
           resolve({ status: 'cleared' });
           break;
+        case 'collectYouTubeChannelVideos': {
+          const links = Array.from(collectedYouTubeLinks);
+          resolve({ links });
+          break;
+        }
         case 'scanTiktokFavoritesOnce': {
           const links = scanAndCollectTiktokFavorites(true);
           resolve({ links });

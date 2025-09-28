@@ -53,6 +53,9 @@ const Popup: React.FC = () => {
   const isInstagramDomain = activeUrl.startsWith("https://www.instagram.com");
   const isYouTubeDomain = activeUrl.startsWith("https://www.youtube.com"); // used for icon and header selection
   const isYouTubeVideoPage = isYouTubeDomain && activeUrl.includes('/watch?v=');
+  const isYouTubeChannelPage = isYouTubeDomain && (
+    activeUrl.includes('/videos') || activeUrl.includes('/shorts') || activeUrl.includes('/streams')
+  );
 
   const [youTubeTitle, setYouTubeTitle] = React.useState<string>(() => getYouTubePageTitle(activeUrl));
 
@@ -62,7 +65,7 @@ const Popup: React.FC = () => {
     addBookmarksToCollection,
   }), [activeUrl, isInstagramDomain]);
 
-  const { scrollStatus, timeRemaining, startScrolling, stopResumeScrolling, startInstagramScrolling, cancelScrolling } = useScrolling(onInstaCompleteCb);
+  const { scrollStatus, timeRemaining, startScrolling, stopResumeScrolling, startInstagramScrolling, startYouTubeScrolling, cancelScrolling } = useScrolling(onInstaCompleteCb);
 
   React.useEffect(() => {
     if (!isTikTokDomain) {
@@ -199,6 +202,29 @@ const Popup: React.FC = () => {
         ensureCollection('tiktok', fallbackName, { type: 'profile', handle: username });
         addBookmarksToCollection('tiktok', fallbackName, links);
       }
+      if (message.type === 'youtubeNewLinks') {
+        if (!isYouTubeDomain) return;
+        const links: string[] = message.links || [];
+        if (links.length > 0) {
+          // You might need a more robust way to get the current collection name
+          // For now, let's assume it's based on the channel name
+          (async () => {
+            try {
+              const tabs = await browser.tabs.query({ active: true, currentWindow: true });
+              const tabId = tabs[0]?.id;
+              if (!tabId) return;
+              
+              const res = await browser.tabs.sendMessage(tabId, { action: 'ytGetChannelInfo' }) as { name: string; handle: string };
+              const channelName = (res?.name || res?.handle || '').trim();
+
+              if (channelName) {
+                const collectionName = `${channelName}_videos`;
+                addBookmarksToCollection('youtube', collectionName, links);
+              }
+            } catch {}
+          })();
+        }
+      }
     };
     browser.runtime.onMessage.addListener(handler);
     return () => browser.runtime.onMessage.removeListener(handler);
@@ -298,6 +324,30 @@ const Popup: React.FC = () => {
   };
 
   const handleYouTubeListVideos = async () => {
+    if (isYouTubeChannelPage) {
+      // Start scrolling and collecting
+      try {
+        const tabs = await browser.tabs.query({ active: true, currentWindow: true });
+        const tabId = tabs[0]?.id;
+        if (!tabId) return;
+        
+        const res = await browser.tabs.sendMessage(tabId, { action: 'ytGetChannelInfo' }) as { name: string; handle: string };
+        const channelName = (res?.name || res?.handle || '').trim();
+
+        if (channelName) {
+          const collectionName = `${channelName}_videos`;
+          ensureCollection('youtube', collectionName, { type: 'profile', handle: channelName });
+          // Pass collection name to scrolling hook or another mechanism
+        }
+        
+        startYouTubeScrolling();
+        
+      } catch (err) {
+        console.error("Error starting YouTube channel scroll:", err);
+      }
+      return;
+    }
+
     try {
       const tabs = await browser.tabs.query({ active: true, currentWindow: true });
       const tabId = tabs[0]?.id;
@@ -345,13 +395,7 @@ const Popup: React.FC = () => {
     const header = ["Platform", "Type", "Handle", "Media", "link"];
     const rows = bookmarks.map(bm => {
       const media = inferMediaType(platform, bm.url);
-      return [
-        platform,
-        meta.type,
-        meta.handle,
-        media,
-        bm.url,
-      ];
+      return [platform, meta.type, meta.handle, media, bm.url];
     });
 
     const csvContent = [header, ...rows]
@@ -422,28 +466,17 @@ const Popup: React.FC = () => {
       <div className="popup-container">
         <div className="top-row">
           {/* Platform indicator */}
-          {isInstagramDomain ? (
-            <img src="assets/instagram.webp" alt="Instagram" width={20} height={20} />
-          ) : isTikTokDomain ? (
-            <img src="assets/tiktok.webp" alt="TikTok" width={20} height={20} />
-          ) : isYouTubeDomain ? (
-            <img src="assets/youtube.webp" alt="YouTube" width={20} height={20} />
-          ) : (
-            <Ban size={20} />
-          )}
+          {isInstagramDomain ? (<img src="assets/instagram.webp" alt="Instagram" width={20} height={20} />
+          ) : isTikTokDomain ? (<img src="assets/tiktok.webp" alt="TikTok" width={20} height={20} />
+          ) : isYouTubeDomain ? (<img src="assets/youtube.webp" alt="YouTube" width={20} height={20} />
+          ) : (<Ban size={20} />)}
           <button onClick={toggleTheme} className="theme-toggle-button">
             {isDarkMode ? <Sun /> : <Moon />}
           </button>
-          <button onClick={downloadAllCollectionsAsDetailedCsv} className="theme-toggle-button">
-            <Download />
-          </button>
+          <button onClick={downloadAllCollectionsAsDetailedCsv} className="theme-toggle-button"><Download /></button>
           <button onClick={() => {
             if (confirm("Are you sure you want to clear all saved collections?")) {
-              Object.keys(getAllCollections()).forEach(platform => {
-                Object.keys(getAllCollections()[platform]).forEach(collectionName => {
-                  deleteCollection(platform, collectionName);
-                });
-              });
+              Object.keys(getAllCollections()).forEach(platform => {Object.keys(getAllCollections()[platform]).forEach(collectionName => {deleteCollection(platform, collectionName);});});
             }
           }} className="theme-toggle-button" aria-label="Clear all collections">
             <Trash2 size={20} />
@@ -451,50 +484,27 @@ const Popup: React.FC = () => {
 
           {(isInstagramDomain || isTikTokDomain || isYouTubeDomain) && (
             <div className="instagram-controls-section">
-              <h4>{isInstagramDomain
-                ? igGetInstagramPageTitle(activeUrl)
-                : (isTikTokDomain
-                  ? iGetTiktokPageTitle(activeUrl, tiktokSectionState)
-                  : youTubeTitle)}</h4>
+              <h4>{isInstagramDomain ? igGetInstagramPageTitle(activeUrl) : (isTikTokDomain ? iGetTiktokPageTitle(activeUrl, tiktokSectionState) : youTubeTitle)}</h4>
               <div className="instagram-buttons-row">
-                {scrollStatus === 'idle' && isInstagramDomain && (
-                  <button onClick={handleInstagramScrollAndCollect} className="theme-toggle-button" style={{ transform: 'scaleX(-1)' }}>
-                    <ListTodo size={20} />
-                  </button>
-                )}
-                {scrollStatus === 'idle' && isTikTokDomain && (
-                  <button onClick={handleCollectTiktokFavorites} className="theme-toggle-button" title="Collect favorites">
-                    <ListTodo size={20} />
-                  </button>
-                )}
-                {scrollStatus === 'idle' && isYouTubeDomain && !isYouTubeVideoPage && (
+                {scrollStatus === 'idle' && isInstagramDomain && (<button onClick={handleInstagramScrollAndCollect} className="theme-toggle-button" style={{ transform: 'scaleX(-1)' }}><ListTodo size={20} /></button>)}
+                {scrollStatus === 'idle' && isTikTokDomain && (<button onClick={handleCollectTiktokFavorites} className="theme-toggle-button" title="Collect favorites"><ListTodo size={20} /></button>)}
+                {scrollStatus === 'idle' && isYouTubeDomain && !isYouTubeVideoPage && !isYouTubeChannelPage && (
                   <button onClick={handleYouTubeListVideos} className="theme-toggle-button" title="List videos on this page">
                     <ListTodo size={20} />
                   </button>
                 )}
-                {scrollStatus === 'idle' && isYouTubeVideoPage && (
-                  <button onClick={handleYouTubeAddVideo} className="theme-toggle-button" title="Add this video to collections">
-                    <Plus size={20} />
+                {scrollStatus === 'idle' && isYouTubeChannelPage && (
+                  <button onClick={handleYouTubeListVideos} className="theme-toggle-button" title="List all videos from channel">
+                    <ListTodo size={20} />
                   </button>
                 )}
+                {scrollStatus === 'idle' && isYouTubeVideoPage && (
+                  <button onClick={handleYouTubeAddVideo} className="theme-toggle-button" title="Add this video to collections"><Plus size={20} /></button>)}
                 {scrollStatus !== 'idle' && (
                   <>
-                    <button
-                      onClick={stopResumeScrolling}
-                      className="theme-toggle-button"
-                    >
-                      {scrollStatus === 'scrolling' ? <Pause size={20} /> : <Play size={20} />}
-                    </button>
-                    <div className="scroll-timer" style={{ marginBottom: 0 }}>
-                      Time until next scroll: {timeRemaining} seconds
-                    </div>
-                    <button
-                      onClick={handleCancelListing}
-                      className="cancel-square-button"
-                      title="Cancel listing"
-                      style={{ marginLeft: 'auto' }}
-                      aria-label="Cancel listing"
-                    />
+                    <button onClick={stopResumeScrolling} className="theme-toggle-button">{scrollStatus === 'scrolling' ? <Pause size={20} /> : <Play size={20} />}</button>
+                    <div className="scroll-timer" style={{ marginBottom: 0 }}>Time until next scroll: {timeRemaining} seconds</div>
+                    <button onClick={handleCancelListing} className="cancel-square-button" title="Cancel listing" style={{marginLeft: 'auto'}} aria-label="Cancel listing" />
                   </>
                 )}
               </div>
@@ -503,12 +513,8 @@ const Popup: React.FC = () => {
 
           {isSelecting && (
             <>
-              <button onClick={validateSelection} className="btn">
-                Validate
-              </button>
-              <button onClick={cancelSelection} className="btn">
-                Cancel
-              </button>
+              <button onClick={validateSelection} className="btn">Validate</button>
+              <button onClick={cancelSelection} className="btn">Cancel</button>
             </>
           )}
         </div>
@@ -546,12 +552,8 @@ const Popup: React.FC = () => {
                     <td>{bookmarks.length}</td>
                     <td>
                       <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center', justifyContent: 'center' }}>
-                        <button onClick={() => deleteCollection(platform, colName)} className="theme-toggle-button" aria-label="Delete collection">
-                          <Trash2 size={18} />
-                        </button>
-                        <button onClick={() => downloadCollectionAsDetailedCsv(platform, colName)} className="theme-toggle-button" aria-label="Download data CSV">
-                          <Download size={18} />
-                        </button>
+                        <button onClick={() => deleteCollection(platform, colName)} className="theme-toggle-button" aria-label="Delete collection"><Trash2 size={18} /></button>
+                        <button onClick={() => downloadCollectionAsDetailedCsv(platform, colName)} className="theme-toggle-button" aria-label="Download data CSV"><Download size={18} /></button>
                       </div>
                     </td>
                   </tr>
