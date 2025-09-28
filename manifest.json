@@ -12,25 +12,17 @@
   "action": {
     "default_popup": "popup.html"
   },
-  "permissions": [
-    "tabs",
-    "storage",
-    "downloads"
-  ],
-  "host_permissions": [
-    "<all_urls>"
-  ],
+  "permissions": ["tabs", "storage", "downloads"],
+  "host_permissions": ["<all_urls>"],
   "content_scripts": [
     {
       "matches": [
         "https://www.tiktok.com/*",
         "https://www.instagram.com/*",
-        "https://www.youtube.com/*"
+        "https://*.youtube.com/*"
       ],
       "js": ["dist/content.js"],
       "run_at": "document_end"
     }
   ]
 }
-
-

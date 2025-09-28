@@ -1,3 +1,4 @@
+- add settings: tempo for scroll
 - support youtube
 - support pinterest
 - support twitter
