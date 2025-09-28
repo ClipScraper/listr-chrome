@@ -259,6 +259,9 @@ const Popup: React.FC = () => {
       if(/\/photo\//.test(url)) return 'pictures';
       return 'video';
     }
+    if (platform === 'youtube') {
+      return 'video';
+    }
     return 'unknown';
   };
 
@@ -268,6 +271,39 @@ const Popup: React.FC = () => {
     startInstagramScrolling,
     pingContentScript,
   }), [activeUrl, ensureCollection, startInstagramScrolling]);
+
+  const handleYouTubeListVideos = async () => {
+    try {
+      const tabs = await browser.tabs.query({ active: true, currentWindow: true });
+      const tabId = tabs[0]?.id;
+      if (tabId == null) {
+        console.warn('Could not get active tab ID.');
+        return;
+      }
+
+      const response: { videos: { url: string; title: string }[], channelName?: string } =
+        await browser.tabs.sendMessage(tabId, { action: 'youtube_scrapeVideos' });
+
+      if (response && response.videos) {
+        const { videos, channelName } = response;
+        if (videos.length === 0) {
+          alert('No videos found on the page.');
+          return;
+        }
+
+        const handle = channelName || 'profile';
+        const collectionName = channelName ? `${handle}_videos` : 'youtube_recommendations';
+
+        ensureCollection('youtube', collectionName, { type: 'recommendation', handle });
+        addBookmarksToCollection('youtube', collectionName, videos.map(v => v.url));
+      } else {
+        alert('Could not retrieve videos from the page.');
+      }
+    } catch (err) {
+      console.error('Error listing YouTube videos:', err);
+      alert('An error occurred while listing videos.');
+    }
+  };
 
   const downloadCollectionAsDetailedCsv = (platform: string, collectionName: string) => {
     const collectionsByPlatform = collectionStore.collections[platform];
@@ -406,6 +442,11 @@ const Popup: React.FC = () => {
                     <ListTodo size={20} />
                   </button>
                 )}
+                {scrollStatus === 'idle' && isYouTubeDomain && (
+                  <button onClick={handleYouTubeListVideos} className="theme-toggle-button" title="List videos on this page">
+                    <ListTodo size={20} />
+                  </button>
+                )}
                 {scrollStatus !== 'idle' && (
                   <>
                     <button
@@ -467,6 +508,7 @@ const Popup: React.FC = () => {
                     <td>
                       {platform === 'instagram' && <img src="assets/instagram.webp" alt="Instagram" width={20} height={20} />}
                       {platform === 'tiktok' && <img src="assets/tiktok.webp" alt="TikTok" width={20} height={20} />}
+                      {platform === 'youtube' && <img src="assets/youtube.webp" alt="YouTube" width={20} height={20} />}
                       {platform === 'other' && <Ban size={20} />}
                     </td>
                     <td>{getCollectionMeta(platform, colName)?.type || 'profile'}</td>
