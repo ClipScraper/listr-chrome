@@ -47,9 +47,39 @@ export function initYouTubeContent() {
   }
 
   function extractPlaylistInfo() {
-    const playlistNameEl = document.querySelector('ytd-playlist-header-renderer yt-formatted-string#text');
-    const playlistName = playlistNameEl?.textContent?.trim() || '';
-    return { playlistName };
+    // Method 1: Try to parse the initial data object from the page
+    try {
+      const allScripts = document.getElementsByTagName('script');
+      for (const script of allScripts) {
+        if (script.innerHTML.includes('ytInitialData')) {
+          const scriptContent = script.innerHTML.substring(script.innerHTML.indexOf('{'));
+          const data = JSON.parse(scriptContent.substring(0, scriptContent.lastIndexOf(';')));
+          const playlistName = data?.metadata?.playlistMetadataRenderer?.title;
+          if (playlistName) {
+            return { playlistName };
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("Could not parse ytInitialData for playlist name", e);
+    }
+
+    // Method 2: Fallback to DOM scraping if the data object method fails
+    const selectors = [
+      'h1.dynamicTextViewModelH1 span',
+      'yt-dynamic-sizing-formatted-string yt-formatted-string#text',
+      'ytd-playlist-header-renderer yt-formatted-string#text',
+      'h1.ytd-playlist-header-renderer',
+    ];
+
+    for (const selector of selectors) {
+      const el = document.querySelector(selector);
+      if (el?.textContent) {
+        return { playlistName: el.textContent.trim() };
+      }
+    }
+    
+    return { playlistName: '' };
   }
 
   // Answer explicit requests

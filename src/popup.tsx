@@ -47,6 +47,7 @@ const Popup: React.FC = () => {
   // TikTok section detection
   const [tiktokSectionState, setTiktokSectionState] = React.useState<{ username: string; section: string } | null>(null);
   const tiktokActiveCollectionRef = React.useRef<{ name: string; type: 'bookmarks' | 'favorites' | 'liked' | 'reposts' | 'profile'; handle: string } | null>(null);
+  const youtubeCurrentCollection = React.useRef<string | null>(null);
   const tiktokPollIntervalRef = React.useRef<number | null>(null);
 
   const isTikTokDomain = activeUrl.startsWith("https://www.tiktok.com");
@@ -59,6 +60,7 @@ const Popup: React.FC = () => {
   );
 
   const [youTubeTitle, setYouTubeTitle] = React.useState<string>(() => getYouTubePageTitle(activeUrl));
+  const [youTubeErrorMessage, setYouTubeErrorMessage] = React.useState<string>('');
 
   const onInstaCompleteCb = React.useCallback(() => iOnInstagramScrollComplete({
     activeUrl,
@@ -174,6 +176,13 @@ const Popup: React.FC = () => {
     };
   }, [scrollStatus, isTikTokDomain]);
 
+  // Clear YouTube error message when URL changes or collections exist
+  React.useEffect(() => {
+    if (youTubeErrorMessage && (Object.keys(getAllCollections()).length > 0 || !isYouTubeDomain)) {
+      setYouTubeErrorMessage('');
+    }
+  }, [activeUrl, getAllCollections, isYouTubeDomain, youTubeErrorMessage]);
+
   React.useEffect(() => {
     const handler = (message: any) => {
       if (message.type === 'instaNewLinks') {
@@ -209,24 +218,19 @@ const Popup: React.FC = () => {
         if (links.length > 0) {
           (async () => {
             try {
-              const tabs = await browser.tabs.query({ active: true, currentWindow: true });
-              const tabId = tabs[0]?.id;
-              if (!tabId) return;
-
               if (isYouTubePlaylistPage) {
+                const tabs = await browser.tabs.query({ active: true, currentWindow: true });
+                const tabId = tabs[0]?.id;
+                if (!tabId) return;
+
                 const res = await browser.tabs.sendMessage(tabId, { action: 'ytGetPlaylistInfo' }) as { playlistName: string };
                 const playlistName = res?.playlistName.trim();
                 if (playlistName) {
                   const collectionName = `${playlistName}_playlist`;
                   addBookmarksToCollection('youtube', collectionName, links);
                 }
-              } else {
-                const res = await browser.tabs.sendMessage(tabId, { action: 'ytGetChannelInfo' }) as { name: string; handle: string };
-                const channelName = (res?.name || res?.handle || '').trim();
-                if (channelName) {
-                  const collectionName = `${channelName}_videos`;
-                  addBookmarksToCollection('youtube', collectionName, links);
-                }
+              } else if (youtubeCurrentCollection.current) {
+                addBookmarksToCollection('youtube', youtubeCurrentCollection.current, links);
               }
             } catch {}
           })();
@@ -316,7 +320,7 @@ const Popup: React.FC = () => {
       const channelName = (res?.name || res?.handle || '').trim();
 
       if (!channelName) {
-        alert("Could not determine the channel for this video.");
+        setYouTubeErrorMessage("Could not determine the channel for this video.");
         return;
       }
 
@@ -326,11 +330,14 @@ const Popup: React.FC = () => {
 
     } catch (err) {
       console.error("Error adding YouTube video:", err);
-      alert("An error occurred while adding the video.");
+      setYouTubeErrorMessage("An error occurred while adding the video.");
     }
   };
 
   const handleYouTubeListVideos = async () => {
+    // Clear any previous error message when starting a new operation
+    setYouTubeErrorMessage('');
+
     if (isYouTubePlaylistPage) {
       try {
         const tabs = await browser.tabs.query({ active: true, currentWindow: true });
@@ -364,7 +371,9 @@ const Popup: React.FC = () => {
         if (channelName) {
           const collectionName = `${channelName}_videos`;
           ensureCollection('youtube', collectionName, { type: 'profile', handle: channelName });
-          // Pass collection name to scrolling hook or another mechanism
+          
+          // Store the current collection name to be used by the poller
+          youtubeCurrentCollection.current = collectionName;
         }
         
         startYouTubeScrolling();
@@ -389,9 +398,12 @@ const Popup: React.FC = () => {
       if (response && response.videos) {
         const { videos, channelName } = response;
         if (videos.length === 0) {
-          alert('No videos found on the page.');
+          setYouTubeErrorMessage('No videos found on the page.');
           return;
         }
+
+        // Clear any previous error message on success
+        setYouTubeErrorMessage('');
 
         const handle = channelName || 'profile';
         const collectionName = channelName ? `${handle}_videos` : 'youtube_recommendations';
@@ -399,11 +411,11 @@ const Popup: React.FC = () => {
         ensureCollection('youtube', collectionName, { type: 'recommendation', handle });
         addBookmarksToCollection('youtube', collectionName, videos.map(v => v.url));
       } else {
-        alert('Could not retrieve videos from the page.');
+        setYouTubeErrorMessage('Could not retrieve videos from the page.');
       }
     } catch (err) {
       console.error('Error listing YouTube videos:', err);
-      alert('An error occurred while listing videos.');
+      setYouTubeErrorMessage('An error occurred while listing videos.');
     }
   };
 
@@ -560,9 +572,16 @@ const Popup: React.FC = () => {
               </tr>
             </thead>
             <tbody>
-              {Object.keys(getAllCollections()).length === 0 && (
+              {Object.keys(getAllCollections()).length === 0 && !youTubeErrorMessage && (
                 <tr>
                   <td colSpan={5} style={{ textAlign: 'center', fontSize: '0.85rem', opacity: 0.7 }}>No collections yet</td>
+                </tr>
+              )}
+              {youTubeErrorMessage && (
+                <tr>
+                  <td colSpan={5} style={{ textAlign: 'center', fontSize: '0.85rem', color: '#ff6b6b', padding: '1rem' }}>
+                    {youTubeErrorMessage}
+                  </td>
                 </tr>
               )}
               {Object.entries(getAllCollections()).map(([platform, platformCollections]) => (
