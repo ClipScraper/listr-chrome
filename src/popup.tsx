@@ -584,8 +584,8 @@ const Popup: React.FC = () => {
                   </td>
                 </tr>
               )}
-              {Object.entries(getAllCollections()).map(([platform, platformCollections]) => (
-                Object.entries(platformCollections).map(([colName, bookmarks]) => (
+              {Object.entries(getAllCollections()).reverse().map(([platform, platformCollections]) => (
+                Object.entries(platformCollections).reverse().map(([colName, bookmarks]) => (
                   <tr key={`${platform}-${colName}`}>
                     <td>
                       {platform === 'instagram' && <img src="assets/instagram.webp" alt="Instagram" width={20} height={20} />}
