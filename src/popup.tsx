@@ -95,29 +95,66 @@ const Popup: React.FC = () => {
       .catch(() => {});
   }, [activeUrl]);
 
-  // Pinterest: compute and update the header label ONLY on the base page
+  // Pinterest: compute and update the header label according to the rules
   React.useEffect(() => {
-    if (!isPinterestRoot) {
+    if (!isPinterestDomain) {
       setPinterestTitle('Pinterest');
       return;
     }
-    (async () => {
-      try {
-        const tabs = await browser.tabs.query({ active: true, currentWindow: true });
-        const tabId = tabs[0]?.id;
-        if (!tabId) return;
-        const res = await browser.tabs.sendMessage(tabId, { action: 'pinterestGetSection' }).catch(() => null) as any;
-        const section = (res?.section || '').trim();
-        if (section) {
-          setPinterestTitle(`Pinterest - ${section}`);
-        } else {
+
+    // Root: ask content script for selected tab label
+    if (isPinterestRoot) {
+      (async () => {
+        try {
+          const tabs = await browser.tabs.query({ active: true, currentWindow: true });
+          const tabId = tabs[0]?.id;
+          if (!tabId) {
+            setPinterestTitle('Pinterest');
+            return;
+          }
+          const res = await browser.tabs.sendMessage(tabId, { action: 'pinterestGetSection' }).catch(() => null) as any;
+          const section = (res?.section || '').trim();
+          setPinterestTitle(section ? `Pinterest - ${section}` : 'Pinterest');
+        } catch {
           setPinterestTitle('Pinterest');
         }
-      } catch {
-        setPinterestTitle('Pinterest');
+      })();
+      return;
+    }
+
+    // Non-root: derive from URL
+    try {
+      const u = new URL(activeUrl);
+      const segs = u.pathname.split('/').filter(Boolean);
+
+      // /pin/{id}/
+      if (segs[0] === 'pin' && segs[1]) {
+        setPinterestTitle(`Pinterest: Pin ${segs[1]}`);
+        return;
       }
-    })();
-  }, [activeUrl, isPinterestRoot]);
+
+      // /search/pins/?q=...
+      if (segs[0] === 'search' && segs[1] === 'pins') {
+        const q = u.searchParams.get('q') || '';
+        const query = decodeURIComponent(q).trim();
+        setPinterestTitle(query ? `Pinterest: Search - ${query}` : 'Pinterest: Search');
+        return;
+      }
+
+      // /{user}/{board}/
+      if (segs.length >= 2) {
+        const user = decodeURIComponent(segs[0]);
+        const board = decodeURIComponent(segs[1]);
+        setPinterestTitle(`Pinterest: ${user} - ${board}`);
+        return;
+      }
+
+      // Fallback
+      setPinterestTitle('Pinterest');
+    } catch {
+      setPinterestTitle('Pinterest');
+    }
+  }, [activeUrl, isPinterestDomain, isPinterestRoot]);
 
   // --- NEW: listen for pushes from the YouTube content script
   React.useEffect(() => {
