@@ -1,10 +1,8 @@
 const path = require('path');
 const webpack = require('webpack');
-const envConfig = require('./env.config');
 
-// Get the target environment; default to 'development'
-const env = process.env.TIKTOKZE_ENV || 'development';
-const endpoint = envConfig[env].endpoint;
+// Optional endpoint from environment; defaults to empty string
+const endpoint = process.env.ENDPOINT || '';
 
 module.exports = {
   entry: {

@@ -45,5 +45,5 @@ This creates `release/<name>-<version>-<env>.zip` ready for upload.
 
 ## Notes
 - Popup UI and content script are ported from the Firefox example.
-- `ENDPOINT` is injected via Webpack DefinePlugin using `env.config.js` and `TIKTOKZE_ENV`.
+- `ENDPOINT` is injected via Webpack DefinePlugin from the `ENDPOINT` environment variable (optional). If not set, it defaults to an empty string.
 - Uses Tailwind via PostCSS at build time; styles are injected by style-loader.
