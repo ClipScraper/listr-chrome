@@ -62,6 +62,7 @@ const Popup: React.FC = () => {
 
   const [youTubeTitle, setYouTubeTitle] = React.useState<string>(() => getYouTubePageTitle(activeUrl));
   const [youTubeErrorMessage, setYouTubeErrorMessage] = React.useState<string>('');
+  const [pinterestTitle, setPinterestTitle] = React.useState<string>('Pinterest');
   const [editingCollection, setEditingCollection] = React.useState<{platform: string, collectionName: string} | null>(null);
   const [editingValue, setEditingValue] = React.useState<string>('');
 
@@ -82,6 +83,25 @@ const Popup: React.FC = () => {
       .then(res => { if (res) setTiktokSectionState(res as any); })
       .catch(() => {});
   }, [activeUrl]);
+
+  // Pinterest: compute and update the header label when on Pinterest
+  React.useEffect(() => {
+    if (!isPinterestDomain) return;
+    (async () => {
+      try {
+        const tabs = await browser.tabs.query({ active: true, currentWindow: true });
+        const tabId = tabs[0]?.id;
+        if (!tabId) return;
+        const res = await browser.tabs.sendMessage(tabId, { action: 'pinterestGetSection' }).catch(() => null) as any;
+        const section = (res?.section || '').trim();
+        if (section) {
+          setPinterestTitle(`Pinterest: ${section} (Profile)`);
+        } else {
+          setPinterestTitle('Pinterest');
+        }
+      } catch {}
+    })();
+  }, [activeUrl, isPinterestDomain]);
 
   // --- NEW: listen for pushes from the YouTube content script
   React.useEffect(() => {
@@ -551,9 +571,9 @@ const Popup: React.FC = () => {
             <Trash2 size={20} />
           </button>
 
-          {(isInstagramDomain || isTikTokDomain || isYouTubeDomain) && (
+          {(isInstagramDomain || isTikTokDomain || isYouTubeDomain || isPinterestDomain) && (
             <div className="instagram-controls-section">
-              <h4>{isInstagramDomain ? igGetInstagramPageTitle(activeUrl) : (isTikTokDomain ? iGetTiktokPageTitle(activeUrl, tiktokSectionState) : youTubeTitle)}</h4>
+              <h4>{isInstagramDomain ? igGetInstagramPageTitle(activeUrl) : (isTikTokDomain ? iGetTiktokPageTitle(activeUrl, tiktokSectionState) : (isYouTubeDomain ? youTubeTitle : pinterestTitle))}</h4>
               <div className="instagram-buttons-row">
                 {scrollStatus === 'idle' && isInstagramDomain && (<button onClick={handleInstagramScrollAndCollect} className="theme-toggle-button" style={{ transform: 'scaleX(-1)' }}><ListTodo size={20} /></button>)}
                 {scrollStatus === 'idle' && isTikTokDomain && (<button onClick={handleCollectTiktokFavorites} className="theme-toggle-button" title="Collect favorites"><ListTodo size={20} /></button>)}
