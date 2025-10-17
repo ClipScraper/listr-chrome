@@ -52,7 +52,8 @@ const Popup: React.FC = () => {
 
   const isTikTokDomain = activeUrl.startsWith("https://www.tiktok.com");
   const isInstagramDomain = activeUrl.startsWith("https://www.instagram.com");
-  const isYouTubeDomain = activeUrl.startsWith("https://www.youtube.com"); // used for icon and header selection
+  const isYouTubeDomain = activeUrl.startsWith("https://www.youtube.com");
+  const isPinterestDomain = /^https:\/\/(?:[^\/]+\.)?pinterest\./.test(activeUrl);
   const isYouTubeVideoPage = isYouTubeDomain && activeUrl.includes('/watch?v=');
   const isYouTubePlaylistPage = isYouTubeDomain && activeUrl.includes('/playlist?list=');
   const isYouTubeChannelPage = isYouTubeDomain && (
@@ -536,6 +537,7 @@ const Popup: React.FC = () => {
           {isInstagramDomain ? (<img src="assets/instagram.webp" alt="Instagram" width={20} height={20} />
           ) : isTikTokDomain ? (<img src="assets/tiktok.webp" alt="TikTok" width={20} height={20} />
           ) : isYouTubeDomain ? (<img src="assets/youtube.webp" alt="YouTube" width={20} height={20} />
+          ) : isPinterestDomain ? (<img src="assets/pinterest.png" alt="Pinterest" width={20} height={20} />
           ) : (<Ban size={20} />)}
           <button onClick={toggleTheme} className="theme-toggle-button">
             {isDarkMode ? <Sun /> : <Moon />}
