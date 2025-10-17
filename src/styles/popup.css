@@ -210,3 +210,28 @@ body {
 .collections-table-section td:not(:last-child) {
   padding-right: calc(0.5rem + 3px);
 }
+
+/* Collection name editing input */
+.collection-edit-input {
+  background-color: #fff;
+  color: #333;
+  border: 1px solid #ccc !important;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.collection-edit-input:focus {
+  border-color: #007cba !important;
+  box-shadow: 0 0 0 2px rgba(0, 124, 186, 0.2);
+}
+
+.dark .collection-edit-input {
+  background-color: #2d3748;
+  color: #f9f9f9;
+  border-color: #4a5568 !important;
+}
+
+.dark .collection-edit-input:focus {
+  border-color: #63b3ed !important;
+  box-shadow: 0 0 0 2px rgba(99, 179, 237, 0.2);
+}

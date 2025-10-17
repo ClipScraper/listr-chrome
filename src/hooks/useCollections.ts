@@ -122,6 +122,45 @@ export function useCollections() {
     });
   };
 
+  const renameCollection = (platform: string, oldCollectionName: string, newCollectionName: string) => {
+    if (oldCollectionName === newCollectionName) return;
+
+    setCollectionStore(prevStore => {
+      const updatedCollections = { ...prevStore.collections };
+      const updatedMeta = { ...(prevStore.meta || {}) } as NonNullable<CollectionStore['meta']>;
+
+      // Move bookmarks to new collection name
+      if (updatedCollections[platform]?.[oldCollectionName]) {
+        const bookmarks = updatedCollections[platform][oldCollectionName];
+
+        // Update collection reference in each bookmark
+        const updatedBookmarks = bookmarks.map(bookmark => ({
+          ...bookmark,
+          collection: newCollectionName
+        }));
+
+        // Remove old collection and add new one
+        const platformCollections = { ...updatedCollections[platform] };
+        delete platformCollections[oldCollectionName];
+        platformCollections[newCollectionName] = updatedBookmarks;
+        updatedCollections[platform] = platformCollections;
+      }
+
+      // Move metadata to new collection name
+      if (updatedMeta[platform]?.[oldCollectionName]) {
+        const meta = updatedMeta[platform][oldCollectionName];
+        const platformMeta = { ...updatedMeta[platform] };
+        delete platformMeta[oldCollectionName];
+        platformMeta[newCollectionName] = meta;
+        updatedMeta[platform] = platformMeta;
+      }
+
+      const updatedStore: CollectionStore = { collections: updatedCollections, meta: updatedMeta };
+      saveCollections(updatedStore);
+      return updatedStore;
+    });
+  };
+
   const getAllCollections = () => collectionStore.collections;
   const getCollectionMeta = (platform: string, collectionName: string): CollectionMeta | undefined => {
     return collectionStore.meta?.[platform]?.[collectionName];
@@ -131,5 +170,5 @@ export function useCollections() {
     return collectionStore.collections[platform] || {};
   };
 
-  return {collectionStore, addBookmarksToCollection, ensureCollection, deleteCollection, getAllCollections, getCollectionsByPlatform, getCollectionMeta};
+  return {collectionStore, addBookmarksToCollection, ensureCollection, deleteCollection, renameCollection, getAllCollections, getCollectionsByPlatform, getCollectionMeta};
 }

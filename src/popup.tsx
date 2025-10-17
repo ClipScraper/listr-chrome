@@ -38,7 +38,7 @@ async function pingContentScript(tabId: number): Promise<boolean> {
 
 const Popup: React.FC = () => {
   const { activeUrl } = useActiveTab();
-  const { collectionStore, addBookmarksToCollection, deleteCollection, getAllCollections, ensureCollection, getCollectionMeta } = useCollections();
+  const { collectionStore, addBookmarksToCollection, deleteCollection, renameCollection, getAllCollections, ensureCollection, getCollectionMeta } = useCollections();
   const { isSelecting, startSelectionMode, validateSelection, cancelSelection } = useSelectionMode((urls) => addBookmarksToCollection('tiktok', 'selected_tiktok_links', urls));
 
   const [isDarkMode, setIsDarkMode] = React.useState(false);
@@ -61,6 +61,8 @@ const Popup: React.FC = () => {
 
   const [youTubeTitle, setYouTubeTitle] = React.useState<string>(() => getYouTubePageTitle(activeUrl));
   const [youTubeErrorMessage, setYouTubeErrorMessage] = React.useState<string>('');
+  const [editingCollection, setEditingCollection] = React.useState<{platform: string, collectionName: string} | null>(null);
+  const [editingValue, setEditingValue] = React.useState<string>('');
 
   const onInstaCompleteCb = React.useCallback(() => iOnInstagramScrollComplete({
     activeUrl,
@@ -277,6 +279,32 @@ const Popup: React.FC = () => {
     if (tiktokPollIntervalRef.current) {
       window.clearInterval(tiktokPollIntervalRef.current);
       tiktokPollIntervalRef.current = null;
+    }
+  };
+
+  const startEditingCollection = (platform: string, collectionName: string) => {
+    setEditingCollection({ platform, collectionName });
+    setEditingValue(collectionName);
+  };
+
+  const saveCollectionEdit = () => {
+    if (editingCollection && editingValue.trim() && editingValue.trim() !== editingCollection.collectionName) {
+      renameCollection(editingCollection.platform, editingCollection.collectionName, editingValue.trim());
+    }
+    setEditingCollection(null);
+    setEditingValue('');
+  };
+
+  const cancelCollectionEdit = () => {
+    setEditingCollection(null);
+    setEditingValue('');
+  };
+
+  const handleEditKeyPress = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      saveCollectionEdit();
+    } else if (e.key === 'Escape') {
+      cancelCollectionEdit();
     }
   };
 
@@ -594,7 +622,43 @@ const Popup: React.FC = () => {
                       {platform === 'other' && <Ban size={20} />}
                     </td>
                     <td>{getCollectionMeta(platform, colName)?.type || 'profile'}</td>
-                    <td>{getCollectionMeta(platform, colName)?.handle || colName}</td>
+                    <td>
+                      {editingCollection?.platform === platform && editingCollection?.collectionName === colName ? (
+                        <input
+                          type="text"
+                          value={editingValue}
+                          onChange={(e) => setEditingValue(e.target.value)}
+                          onKeyDown={handleEditKeyPress}
+                          onBlur={saveCollectionEdit}
+                          className="collection-edit-input"
+                          autoFocus
+                          style={{
+                            width: '100%',
+                            fontSize: '0.85rem'
+                          }}
+                        />
+                      ) : (
+                        <span
+                          onClick={() => startEditingCollection(platform, colName)}
+                          style={{
+                            cursor: 'pointer',
+                            userSelect: 'none',
+                            padding: '0.25rem',
+                            borderRadius: '4px',
+                            transition: 'background-color 0.2s'
+                          }}
+                          title="Click to edit collection name"
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.backgroundColor = isDarkMode ? '#4a5568' : '#f0f0f0';
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.backgroundColor = 'transparent';
+                          }}
+                        >
+                          {getCollectionMeta(platform, colName)?.handle || colName}
+                        </span>
+                      )}
+                    </td>
                     <td>{bookmarks.length}</td>
                     <td>
                       <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center', justifyContent: 'center' }}>
