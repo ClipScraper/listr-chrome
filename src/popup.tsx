@@ -52,7 +52,19 @@ const Popup: React.FC = () => {
 
   const isTikTokDomain = activeUrl.startsWith("https://www.tiktok.com");
   const isInstagramDomain = activeUrl.startsWith("https://www.instagram.com");
-  const isYouTubeDomain = activeUrl.startsWith("https://www.youtube.com"); // used for icon and header selection
+  const isYouTubeDomain = /^https:\/\/www\.youtube\./.test(activeUrl);
+  const isPinterestDomain = /^https:\/\/(?:[^\/]+\.)?pinterest\./.test(activeUrl);
+
+  // Only the base Pinterest page (path "/") should show the tab label
+  const isPinterestRoot = React.useMemo(() => {
+    try {
+      const u = new URL(activeUrl);
+      return isPinterestDomain && u.pathname === '/';
+    } catch {
+      return false;
+    }
+  }, [activeUrl, isPinterestDomain]);
+
   const isYouTubeVideoPage = isYouTubeDomain && activeUrl.includes('/watch?v=');
   const isYouTubePlaylistPage = isYouTubeDomain && activeUrl.includes('/playlist?list=');
   const isYouTubeChannelPage = isYouTubeDomain && (
@@ -61,6 +73,7 @@ const Popup: React.FC = () => {
 
   const [youTubeTitle, setYouTubeTitle] = React.useState<string>(() => getYouTubePageTitle(activeUrl));
   const [youTubeErrorMessage, setYouTubeErrorMessage] = React.useState<string>('');
+  const [pinterestTitle, setPinterestTitle] = React.useState<string>('Pinterest');
   const [editingCollection, setEditingCollection] = React.useState<{platform: string, collectionName: string} | null>(null);
   const [editingValue, setEditingValue] = React.useState<string>('');
 
@@ -82,6 +95,67 @@ const Popup: React.FC = () => {
       .catch(() => {});
   }, [activeUrl]);
 
+  // Pinterest: compute and update the header label according to the rules
+  React.useEffect(() => {
+    if (!isPinterestDomain) {
+      setPinterestTitle('Pinterest');
+      return;
+    }
+
+    // Root: ask content script for selected tab label
+    if (isPinterestRoot) {
+      (async () => {
+        try {
+          const tabs = await browser.tabs.query({ active: true, currentWindow: true });
+          const tabId = tabs[0]?.id;
+          if (!tabId) {
+            setPinterestTitle('Pinterest');
+            return;
+          }
+          const res = await browser.tabs.sendMessage(tabId, { action: 'pinterestGetSection' }).catch(() => null) as any;
+          const section = (res?.section || '').trim();
+          setPinterestTitle(section ? `Pinterest - ${section}` : 'Pinterest');
+        } catch {
+          setPinterestTitle('Pinterest');
+        }
+      })();
+      return;
+    }
+
+    // Non-root: derive from URL
+    try {
+      const u = new URL(activeUrl);
+      const segs = u.pathname.split('/').filter(Boolean);
+
+      // /pin/{id}/
+      if (segs[0] === 'pin' && segs[1]) {
+        setPinterestTitle(`Pinterest: Pin ${segs[1]}`);
+        return;
+      }
+
+      // /search/pins/?q=...
+      if (segs[0] === 'search' && segs[1] === 'pins') {
+        const q = u.searchParams.get('q') || '';
+        const query = decodeURIComponent(q).trim();
+        setPinterestTitle(query ? `Pinterest: Search - ${query}` : 'Pinterest: Search');
+        return;
+      }
+
+      // /{user}/{board}/
+      if (segs.length >= 2) {
+        const user = decodeURIComponent(segs[0]);
+        const board = decodeURIComponent(segs[1]);
+        setPinterestTitle(`Pinterest: ${user} - ${board}`);
+        return;
+      }
+
+      // Fallback
+      setPinterestTitle('Pinterest');
+    } catch {
+      setPinterestTitle('Pinterest');
+    }
+  }, [activeUrl, isPinterestDomain, isPinterestRoot]);
+
   // --- NEW: listen for pushes from the YouTube content script
   React.useEffect(() => {
     const onMsg = (message: any) => {
@@ -102,26 +176,18 @@ const Popup: React.FC = () => {
 
   // Request YouTube channel info whenever we open the popup on a YouTube page
   React.useEffect(() => {
-    // support all youtube TLDs (youtube.com, youtube.co.uk, etc.)
-    if (!/^https:\/\/www\.youtube\./.test(activeUrl)) return;
+    if (!isYouTubeDomain) return;
 
     (async () => {
       try {
-        console.log("[YT POPUP] effect start for", activeUrl);
         const tabs = await browser.tabs.query({ active: true, currentWindow: true });
         const tabId = tabs[0]?.id;
         if (tabId == null) {
           setYouTubeTitle(getYouTubePageTitle(activeUrl));
           return;
         }
-        console.log("[YT POPUP] sending ytGetChannelInfo → tab", tabId);
         const res = await browser.tabs.sendMessage(tabId, { action: 'ytGetChannelInfo' })
-          .catch(err => {
-            console.warn("[YT POPUP] sendMessage error:", err);
-            return null;
-          }) as any;
-
-        console.log("[YT POPUP] response:", res);
+          .catch(() => null) as any;
 
         const name = (res?.name || '').trim();
         const handle = (res?.handle || '').trim();
@@ -133,12 +199,11 @@ const Popup: React.FC = () => {
         } else {
           setYouTubeTitle(getYouTubePageTitle(activeUrl));
         }
-      } catch (e) {
-        console.warn("[YT POPUP] effect error:", e);
+      } catch {
         setYouTubeTitle(getYouTubePageTitle(activeUrl));
       }
     })();
-  }, [activeUrl]);
+  }, [activeUrl, isYouTubeDomain]);
 
   // While scrolling on TikTok, poll periodically for newly found links
   React.useEffect(() => {
@@ -536,6 +601,7 @@ const Popup: React.FC = () => {
           {isInstagramDomain ? (<img src="assets/instagram.webp" alt="Instagram" width={20} height={20} />
           ) : isTikTokDomain ? (<img src="assets/tiktok.webp" alt="TikTok" width={20} height={20} />
           ) : isYouTubeDomain ? (<img src="assets/youtube.webp" alt="YouTube" width={20} height={20} />
+          ) : isPinterestDomain ? (<img src="assets/pinterest.png" alt="Pinterest" width={20} height={20} />
           ) : (<Ban size={20} />)}
           <button onClick={toggleTheme} className="theme-toggle-button">
             {isDarkMode ? <Sun /> : <Moon />}
@@ -549,9 +615,11 @@ const Popup: React.FC = () => {
             <Trash2 size={20} />
           </button>
 
-          {(isInstagramDomain || isTikTokDomain || isYouTubeDomain) && (
+          {(isInstagramDomain || isTikTokDomain || isYouTubeDomain || isPinterestDomain) && (
             <div className="instagram-controls-section">
-              <h4>{isInstagramDomain ? igGetInstagramPageTitle(activeUrl) : (isTikTokDomain ? iGetTiktokPageTitle(activeUrl, tiktokSectionState) : youTubeTitle)}</h4>
+              <h4>
+                {isInstagramDomain ? igGetInstagramPageTitle(activeUrl) : isTikTokDomain ? iGetTiktokPageTitle(activeUrl, tiktokSectionState) : isYouTubeDomain ? youTubeTitle : pinterestTitle}
+              </h4>
               <div className="instagram-buttons-row">
                 {scrollStatus === 'idle' && isInstagramDomain && (<button onClick={handleInstagramScrollAndCollect} className="theme-toggle-button" style={{ transform: 'scaleX(-1)' }}><ListTodo size={20} /></button>)}
                 {scrollStatus === 'idle' && isTikTokDomain && (<button onClick={handleCollectTiktokFavorites} className="theme-toggle-button" title="Collect favorites"><ListTodo size={20} /></button>)}

@@ -19,7 +19,8 @@
       "matches": [
         "https://www.tiktok.com/*",
         "https://www.instagram.com/*",
-        "https://*.youtube.com/*"
+        "https://*.youtube.com/*",
+        "https://*.pinterest.com/*"
       ],
       "js": ["dist/content.js"],
       "run_at": "document_end"

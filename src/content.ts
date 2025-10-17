@@ -1,5 +1,6 @@
 import browser from 'webextension-polyfill';
 import { initYouTubeContent } from './apps/youtube/content';
+import { initPinterestContent } from './apps/pinterest/content';
 
 console.log("Content script loaded.");
 
@@ -494,3 +495,4 @@ browser.runtime.onMessage.addListener(async (message: any, _sender: any) => {
 
 // Initialize optional app integrations (safe on non-YouTube hosts)
 try { initYouTubeContent(); } catch {}
+try { initPinterestContent(); } catch {}
