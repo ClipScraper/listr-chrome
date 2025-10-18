@@ -15,7 +15,7 @@ body {
   padding: 0.5rem;
   background-color: #fff;
   color: #000;
-  width: 460px; /* Widen to fit table */
+  width: 540px; /* Widen to fit all columns comfortably */
   max-height: 600px; /* Allow a bit more height before scrolling */
   overflow-y: auto; /* Enable vertical scrolling */
 }
@@ -178,12 +178,65 @@ body {
   width: 100%;
   border-collapse: separate;
   border-spacing: 0;
+  table-layout: fixed; /* honor explicit column widths strictly */
+}
+
+/* Column sizing & alignment */
+/* 1: Platform - center icon */
+.collections-table-section th:nth-child(1),
+.collections-table-section td:nth-child(1) {
+  width: 60px; /* enough to center a 20px icon nicely */
+  min-width: 60px;
+  max-width: 60px;
+  text-align: center;
+}
+.collections-table-section td:nth-child(1) img,
+.collections-table-section td:nth-child(1) svg {
+  display: block;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* 2: Type - fixed 100px */
+.collections-table-section th:nth-child(2),
+.collections-table-section td:nth-child(2) {
+  width: 110px;
+  min-width: 110px;
+  max-width: 110px;
+}
+
+/* 3: Handle - fixed 180px */
+.collections-table-section th:nth-child(3),
+.collections-table-section td:nth-child(3) {
+  width: 140px;
+  min-width: 140px;
+  max-width: 140px;
+}
+
+/* 4: Items - fixed 50px */
+.collections-table-section th:nth-child(4),
+.collections-table-section td:nth-child(4) {
+  width: 50px;
+  min-width: 50px;
+  max-width: 50px;
+}
+
+/* 5: Action - fixed 100px */
+.collections-table-section th:nth-child(5),
+.collections-table-section td:nth-child(5) {
+  width: 70px;
+  min-width: 70px;
+  max-width: 70px;
 }
 
 .collections-table-section th,
 .collections-table-section td {
   text-align: center;
   padding: 0.25rem 0.5rem;
+  box-sizing: border-box;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* Divider between header and rows */
