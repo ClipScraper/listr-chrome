@@ -34,7 +34,6 @@ export function useCollections() {
       .then(data => {
         if (data.allCollections) {
           const loaded = data.allCollections as CollectionStore;
-          // ensure meta map exists
           if (!loaded.meta) loaded.meta = {};
           setCollectionStore(loaded);
         }
@@ -43,15 +42,22 @@ export function useCollections() {
   }, []);
 
   const saveCollections = (updatedStore: CollectionStore) => {
-    // Persist only; state is already updated by the caller's setState
     browser.storage.local.set({ allCollections: updatedStore })
       .catch(err => console.error('Error saving collections:', err));
   };
 
+  // Insert a key at the *front* of an object (preserving order of the rest)
+  function insertKeyFirst<T extends Record<string, any>>(obj: T, key: string, val: any): T {
+    const out: Record<string, any> = { [key]: val };
+    for (const k of Object.keys(obj)) out[k] = obj[k];
+    return out as T;
+  }
+
   const addBookmarksToCollection = (platform: 'tiktok' | 'instagram' | 'youtube' | 'pinterest' | 'other', collectionName: string, urls: string[]) => {
     if (!urls || urls.length === 0) return;
     setCollectionStore(prevStore => {
-      const currentList = prevStore.collections[platform]?.[collectionName] || [];
+      const platformMap = prevStore.collections[platform] || {};
+      const currentList = platformMap[collectionName] || [];
       const existing = new Set(currentList.map(b => b.url));
       const filtered = urls.filter(u => !existing.has(u));
       if (filtered.length === 0) return prevStore;
@@ -63,17 +69,16 @@ export function useCollections() {
         collection: collectionName,
       }));
 
-      const updatedCollections = {
-        ...prevStore.collections,
-        [platform]: {
-          ...(prevStore.collections[platform] || {}),
-          [collectionName]: [
-            ...currentList,
-            ...newBookmarks,
-          ],
-        },
-      };
+      let nextPlatformMap: typeof platformMap;
+      if (!platformMap[collectionName]) {
+        // New collection: place it at the top
+        nextPlatformMap = insertKeyFirst(platformMap, collectionName, newBookmarks);
+      } else {
+        // Existing collection: append items
+        nextPlatformMap = { ...platformMap, [collectionName]: [...currentList, ...newBookmarks] };
+      }
 
+      const updatedCollections = { ...prevStore.collections, [platform]: nextPlatformMap };
       const updatedStore: CollectionStore = { collections: updatedCollections, meta: prevStore.meta };
       saveCollections(updatedStore);
       return updatedStore;
@@ -84,14 +89,26 @@ export function useCollections() {
     setCollectionStore(prevStore => {
       const platformCollections = prevStore.collections[platform] || {};
       const already = !!platformCollections[collectionName];
-      const updatedCollections = already ? prevStore.collections : {...prevStore.collections, [platform]: {...platformCollections, [collectionName]: []}};
+
+      // Put new collections at the front
+      const nextPlatformCollections = already
+        ? platformCollections
+        : insertKeyFirst(platformCollections, collectionName, []);
+
+      // Meta handling (also keep new meta at the front for consistency)
       const updatedMeta = { ...(prevStore.meta || {}) } as NonNullable<CollectionStore['meta']>;
       if (!updatedMeta[platform]) updatedMeta[platform] = {};
-      if (meta) {
-        updatedMeta[platform][collectionName] = meta;
-      } else if (!updatedMeta[platform][collectionName]) {
-        updatedMeta[platform][collectionName] = { type: 'profile', handle: collectionName };
+      if (!already) {
+        updatedMeta[platform] = insertKeyFirst(
+          updatedMeta[platform],
+          collectionName,
+          meta || { type: 'profile', handle: collectionName }
+        );
+      } else if (meta) {
+        updatedMeta[platform] = { ...updatedMeta[platform], [collectionName]: meta };
       }
+
+      const updatedCollections = { ...prevStore.collections, [platform]: nextPlatformCollections };
       const updatedStore: CollectionStore = { collections: updatedCollections, meta: updatedMeta };
       saveCollections(updatedStore);
       return updatedStore;
@@ -129,30 +146,26 @@ export function useCollections() {
       const updatedCollections = { ...prevStore.collections };
       const updatedMeta = { ...(prevStore.meta || {}) } as NonNullable<CollectionStore['meta']>;
 
-      // Move bookmarks to new collection name
+      // Move bookmarks to new collection name (keep it at same relative position)
       if (updatedCollections[platform]?.[oldCollectionName]) {
         const bookmarks = updatedCollections[platform][oldCollectionName];
-
-        // Update collection reference in each bookmark
         const updatedBookmarks = bookmarks.map(bookmark => ({
           ...bookmark,
           collection: newCollectionName
         }));
 
-        // Remove old collection and add new one
         const platformCollections = { ...updatedCollections[platform] };
         delete platformCollections[oldCollectionName];
-        platformCollections[newCollectionName] = updatedBookmarks;
-        updatedCollections[platform] = platformCollections;
+        // Put the renamed collection at the *front* as a “new” row feeling
+        updatedCollections[platform] = insertKeyFirst(platformCollections, newCollectionName, updatedBookmarks);
       }
 
-      // Move metadata to new collection name
+      // Move metadata
       if (updatedMeta[platform]?.[oldCollectionName]) {
         const meta = updatedMeta[platform][oldCollectionName];
         const platformMeta = { ...updatedMeta[platform] };
         delete platformMeta[oldCollectionName];
-        platformMeta[newCollectionName] = meta;
-        updatedMeta[platform] = platformMeta;
+        updatedMeta[platform] = insertKeyFirst(platformMeta, newCollectionName, meta);
       }
 
       const updatedStore: CollectionStore = { collections: updatedCollections, meta: updatedMeta };

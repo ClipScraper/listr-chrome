@@ -25,6 +25,48 @@ interface ContentScriptPingResponse {
   status: "pong";
 }
 
+// Helper: derive a Pinterest title just from the URL.
+// We still ask the content script for the selected tab ONLY on the homepage.
+function getPinterestPageTitleFromUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    if (!/pinterest\./.test(u.hostname)) return 'Pinterest';
+    const segs = u.pathname.split('/').filter(Boolean);
+
+    // Home
+    if (segs.length === 0) return 'Pinterest';
+
+    // Pin page
+    if (segs[0] === 'pin' && segs[1]) {
+      return `Pinterest pin - ${segs[1]}`;
+    }
+
+    // Search
+    if (segs[0] === 'search' && segs[1] === 'pins') {
+      const q = u.searchParams.get('q') || '';
+      const query = q ? decodeURIComponent(q) : 'pins';
+      return `Pinterest search - ${query}`;
+    }
+
+    // Board (also handles .../<board>/pins)
+    if (segs.length >= 2) {
+      const user = decodeURIComponent(segs[0]);
+      const board = decodeURIComponent(segs[1]);
+      return `Pinterest: ${user} - ${board}`;
+    }
+
+    // Profile
+    if (segs.length === 1) {
+      const user = decodeURIComponent(segs[0]);
+      return `Pinterest profile - ${user}`;
+    }
+
+    return 'Pinterest';
+  } catch {
+    return 'Pinterest';
+  }
+}
+
 // Function to ping the content script and check if it's active
 async function pingContentScript(tabId: number): Promise<boolean> {
   try {
@@ -58,7 +100,7 @@ const Popup: React.FC = () => {
   const isYouTubeDomain = /^https:\/\/www\.youtube\./.test(activeUrl);
   const isPinterestDomain = /^https:\/\/(?:[^\/]+\.)?pinterest\./.test(activeUrl);
 
-  // Only the base Pinterest page (path "/") should show the tab label
+  // Detect homepage precisely
   const isPinterestRoot = React.useMemo(() => {
     try {
       const u = new URL(activeUrl);
@@ -98,31 +140,42 @@ const Popup: React.FC = () => {
       .catch(() => {});
   }, [activeUrl]);
 
-  // Pinterest: compute and update the header label ONLY on the base page
+  // Pinterest: compute a title on *all* pages, and only on "/" try to enrich with the selected tab label.
   React.useEffect(() => {
-    if (!isPinterestRoot) {
+    if (!isPinterestDomain) {
       setPinterestTitle('Pinterest');
       return;
     }
+
+    const base = getPinterestPageTitleFromUrl(activeUrl);
+
+    if (!isPinterestRoot) {
+      setPinterestTitle(base);
+      return;
+    }
+
     (async () => {
       try {
         const tabs = await browser.tabs.query({ active: true, currentWindow: true });
         const tabId = tabs[0]?.id;
-        if (!tabId) return;
+        if (!tabId) {
+          setPinterestTitle(base);
+          return;
+        }
         const res = await browser.tabs.sendMessage(tabId, { action: 'pinterestGetSection' }).catch(() => null) as any;
         const section = (res?.section || '').trim();
         if (section) {
           setPinterestTitle(`Pinterest - ${section}`);
         } else {
-          setPinterestTitle('Pinterest');
+          setPinterestTitle(base);
         }
       } catch {
-        setPinterestTitle('Pinterest');
+        setPinterestTitle(base);
       }
     })();
-  }, [activeUrl, isPinterestRoot]);
+  }, [activeUrl, isPinterestDomain, isPinterestRoot]);
 
-  // --- NEW: listen for pushes from the YouTube content script
+  // --- listen for pushes from the YouTube content script
   React.useEffect(() => {
     const onMsg = (message: any) => {
       if (message?.type === 'ytChannelInfoPush') {
@@ -270,7 +323,7 @@ const Popup: React.FC = () => {
         }
       }
 
-      /** NEW: Pinterest incremental push */
+      /** Pinterest incremental push */
       if (message.type === 'pinterestNewLinks') {
         if (!isPinterestDomain) return;
         const links: string[] = message.links || [];
@@ -282,8 +335,6 @@ const Popup: React.FC = () => {
           addBookmarksToCollection('pinterest', active.name, links);
           return;
         }
-
-        // Fallback: dump into a generic bucket if no active collection set
         ensureCollection('pinterest', 'pinterest_page', { type: 'profile', handle: 'Pinterest' });
         addBookmarksToCollection('pinterest', 'pinterest_page', links);
       }
@@ -322,7 +373,9 @@ const Popup: React.FC = () => {
     });
   }, [activeUrl, ensureCollection, addBookmarksToCollection, pingContentScript, scrollStatus, startScrolling]);
 
-  /** NEW: Pinterest list button handler */
+  /** Pinterest list button handler */
+  // FIXED: ensure /search/pins is handled BEFORE the generic 2-segment matcher
+  // Pinterest: list pins on current page (search-first routing + strict TS-safe)
   const handleCollectPinterestPins = React.useCallback(async () => {
     try {
       const u = new URL(activeUrl);
@@ -330,32 +383,47 @@ const Popup: React.FC = () => {
       let handle = 'Pinterest';
       let type: 'bookmarks' | 'profile' = 'profile';
 
-      if (/^\/pin\/(\d+)/.test(u.pathname)) {
-        const id = (u.pathname.match(/^\/pin\/(\d+)/) || [,''])[1];
+      // 1) /search/pins?q=... (handle this BEFORE the generic 2-segment matcher)
+      if (u.pathname.startsWith('/search/pins')) {
+        const q = (u.searchParams.get('q') || '').trim();
+        if (q) {
+          collectionName = `search_${q}`;
+          handle = `Search - ${q}`;
+        } else {
+          collectionName = 'search_pins';
+          handle = 'Search - pins';
+        }
+        type = 'profile';
+
+      // 2) Single pin
+      } else if (/^\/pin\/(\d+)/.test(u.pathname)) {
+        const id = (u.pathname.match(/^\/pin\/(\d+)/) || [, ''])[1];
         collectionName = `pin_${id}`;
         handle = `Pin ${id}`;
         type = 'bookmarks';
-      } else if (/^\/([^/]+)\/([^/]+)\/?$/.test(u.pathname)) {
-        const m = u.pathname.match(/^\/([^/]+)\/([^/]+)\/?$/)!;
+
+      // 3) Board: /{user}/{board} (runs after search so it won't swallow it)
+      } else if (/^\/([^/]+)\/([^/]+)\/?/.test(u.pathname)) {
+        const m = u.pathname.match(/^\/([^/]+)\/([^/]+)\/?/)!;
         const user = decodeURIComponent(m[1]);
         const board = decodeURIComponent(m[2]);
         collectionName = `${user}_${board}`;
         handle = `${user} - ${board}`;
         type = 'profile';
-      } else if (u.pathname.startsWith('/search/pins')) {
-        const q = (u.searchParams.get('q') || '').trim();
-        if (q) {
-          collectionName = `search_${q}`;
-          handle = `Search - ${q}`;
-          type = 'profile';
-        }
+
+      // 4) Home: include selected section if available
       } else if (u.pathname === '/') {
-        // Ask content script for selected home tab label
         try {
           const tabs = await browser.tabs.query({ active: true, currentWindow: true });
           const tabId = tabs[0]?.id;
-          const res = tabId ? await browser.tabs.sendMessage(tabId, { action: 'pinterestGetSection' }).catch(() => null) as any : null;
-          const section = (res?.section || '').trim();
+
+          // TS-safe: force `any` so strict mode won't complain about `.section`
+          const res: any = tabId
+            ? await (browser.tabs.sendMessage(tabId, { action: 'pinterestGetSection' }) as any)
+                .catch(() => null)
+            : null;
+
+          const section = (res && typeof res.section === 'string') ? res.section.trim() : '';
           if (section) {
             collectionName = `home_${section}`;
             handle = section;
@@ -369,17 +437,15 @@ const Popup: React.FC = () => {
         }
       }
 
+      // Ensure meta row and start incremental collection
       pinterestActiveRef.current = { name: collectionName, type, handle };
       ensureCollection('pinterest', collectionName, { type, handle });
 
-      // reset and start scroll
       const tabs = await browser.tabs.query({ active: true, currentWindow: true });
       const tabId = tabs[0]?.id;
       if (tabId) {
         await browser.tabs.sendMessage(tabId, { action: 'resetPinterestState' }).catch(() => null);
       }
-
-      // Start the generic scroller (pins are discovered each tick)
       startScrolling();
     } catch (e) {
       console.error('Error starting Pinterest collection:', e);
@@ -443,7 +509,6 @@ const Popup: React.FC = () => {
       return 'video';
     }
     if (platform === 'pinterest') {
-      // Pins are images/GIFs most of the time
       return 'pictures';
     }
     return 'unknown';
@@ -481,7 +546,6 @@ const Popup: React.FC = () => {
   };
 
   const handleYouTubeListVideos = async () => {
-    // Clear any previous error message when starting a new operation
     setYouTubeErrorMessage('');
 
     if (isYouTubePlaylistPage) {
@@ -505,7 +569,6 @@ const Popup: React.FC = () => {
     }
 
     if (isYouTubeChannelPage) {
-      // Start scrolling and collecting
       try {
         const tabs = await browser.tabs.query({ active: true, currentWindow: true });
         const tabId = tabs[0]?.id;
@@ -517,8 +580,6 @@ const Popup: React.FC = () => {
         if (channelName) {
           const collectionName = `${channelName}_videos`;
           ensureCollection('youtube', collectionName, { type: 'profile', handle: channelName });
-          
-          // Store the current collection name to be used by the poller
           youtubeCurrentCollection.current = collectionName;
         }
         
@@ -548,7 +609,6 @@ const Popup: React.FC = () => {
           return;
         }
 
-        // Clear any previous error message on success
         setYouTubeErrorMessage('');
 
         const handle = channelName || 'profile';
@@ -671,7 +731,10 @@ const Popup: React.FC = () => {
           {(isInstagramDomain || isTikTokDomain || isYouTubeDomain || isPinterestDomain) && (
             <div className="instagram-controls-section">
               <h4>
-                {isInstagramDomain ? igGetInstagramPageTitle(activeUrl) : isTikTokDomain ? iGetTiktokPageTitle(activeUrl, tiktokSectionState) : isYouTubeDomain ? youTubeTitle : pinterestTitle}
+                {isInstagramDomain ? igGetInstagramPageTitle(activeUrl)
+                  : isTikTokDomain ? iGetTiktokPageTitle(activeUrl, tiktokSectionState)
+                  : isYouTubeDomain ? youTubeTitle
+                  : pinterestTitle}
               </h4>
               <div className="instagram-buttons-row">
                 {scrollStatus === 'idle' && isInstagramDomain && (<button onClick={handleInstagramScrollAndCollect} className="theme-toggle-button" style={{ transform: 'scaleX(-1)' }}><ListTodo size={20} /></button>)}
@@ -738,8 +801,8 @@ const Popup: React.FC = () => {
                   </td>
                 </tr>
               )}
-              {Object.entries(getAllCollections()).reverse().map(([platform, platformCollections]) => (
-                Object.entries(platformCollections).reverse().map(([colName, bookmarks]) => (
+              {Object.entries(getAllCollections()).map(([platform, platformCollections]) => (
+                Object.entries(platformCollections).map(([colName, bookmarks]) => (
                   <tr key={`${platform}-${colName}`}>
                     <td>
                       {platform === 'instagram' && <img src="assets/instagram.webp" alt="Instagram" width={20} height={20} />}
@@ -751,37 +814,14 @@ const Popup: React.FC = () => {
                     <td>{getCollectionMeta(platform, colName)?.type || 'profile'}</td>
                     <td>
                       {editingCollection?.platform === platform && editingCollection?.collectionName === colName ? (
-                        <input
-                          type="text"
-                          value={editingValue}
-                          onChange={(e) => setEditingValue(e.target.value)}
-                          onKeyDown={handleEditKeyPress}
-                          onBlur={saveCollectionEdit}
-                          className="collection-edit-input"
-                          autoFocus
-                          style={{
-                            width: '100%',
-                            fontSize: '0.85rem'
-                          }}
-                        />
+                        <input type="text" value={editingValue} onChange={(e) => setEditingValue(e.target.value)} onKeyDown={handleEditKeyPress} onBlur={saveCollectionEdit} className="collection-edit-input" autoFocus style={{width: '100%', fontSize: '0.85rem'}} />
                       ) : (
                         <span
                           onClick={() => startEditingCollection(platform, colName)}
-                          style={{
-                            cursor: 'pointer',
-                            userSelect: 'none',
-                            padding: '0.25rem',
-                            borderRadius: '4px',
-                            transition: 'background-color 0.2s'
-                          }}
+                          style={{cursor: 'pointer', userSelect: 'none', padding: '0.25rem', borderRadius: '4px', transition: 'background-color 0.2s'}}
                           title="Click to edit collection name"
-                          onMouseEnter={(e) => {
-                            e.currentTarget.style.backgroundColor = isDarkMode ? '#4a5568' : '#f0f0f0';
-                          }}
-                          onMouseLeave={(e) => {
-                            e.currentTarget.style.backgroundColor = 'transparent';
-                          }}
-                        >
+                          onMouseEnter={(e) => {e.currentTarget.style.backgroundColor = isDarkMode ? '#4a5568' : '#f0f0f0'}}
+                          onMouseLeave={(e) => {e.currentTarget.style.backgroundColor = 'transparent'}}>
                           {getCollectionMeta(platform, colName)?.handle || colName}
                         </span>
                       )}

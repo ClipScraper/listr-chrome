@@ -9,6 +9,10 @@
 - add collection sorting so that the latest downloaded is always on top of the list
 
 
+- persistent renaming of rows
+- width of extension window to also display buttons
+
+
 Fix issue when google introduces ads link:
 youtube,playlist,Watch later,video,https://www.youtube.com/watch?v=mVrCPo8eB3A&pp=ugUEEgJlbg%3D%3D
 youtube,playlist,Watch later,video,https://www.youtube.com/watch?v=kDJ8mucd4R0&list=RDMMkDJ8mucd4R0&start_radio=1
