@@ -36,6 +36,9 @@ const collectedInstaLinks = new Set<string>();
 const collectedInstaItems: InstagramItem[] = [];
 const collectedTiktokFavLinks = new Set<string>();
 
+/** NEW: Pinterest incremental set */
+const collectedPinterestLinks = new Set<string>();
+
 function toAbsoluteInstagramUrl(pathOrUrl: string): string | null {
   try {
     // Normalize and ensure trailing slash for consistency
@@ -113,6 +116,54 @@ function scanAndCollectYouTubeVideos(logEach: boolean = false): string[] {
       }
     }
   });
+  return newly;
+}
+
+/** NEW: Pinterest pin scanning */
+function scanAndCollectPinterestPins(logEach: boolean = false): string[] {
+  if (!/pinterest\./.test(location.hostname)) return [];
+  const newly: string[] = [];
+
+  const anchors = document.querySelectorAll<HTMLAnchorElement>('a[href]');
+  anchors.forEach(a => {
+    const href = a.getAttribute('href') || '';
+    if (!href) return;
+
+    // Accept absolute or site-relative links, normalize to absolute
+    let url: string;
+    try {
+      url = new URL(href, location.origin).toString();
+    } catch {
+      return;
+    }
+
+    // Filter strictly to /pin/{id}/ style URLs and strip query/hash
+    const m = url.match(/^https:\/\/(?:[^/]+\.)?pinterest\.com\/pin\/(\d+)\/?/i);
+    if (!m) return;
+
+    try {
+      const u = new URL(url);
+      u.hash = '';
+      u.search = '';
+      // Ensure a trailing slash for consistency
+      const path = u.pathname.endsWith('/') ? u.pathname : u.pathname + '/';
+      u.pathname = path;
+      const finalUrl = u.toString();
+
+      // Only count visible anchors to avoid hidden templates
+      const isVisible = !!(a.offsetParent || (a as any).offsetWidth || (a as any).offsetHeight);
+      if (!isVisible) return;
+
+      if (!collectedPinterestLinks.has(finalUrl)) {
+        collectedPinterestLinks.add(finalUrl);
+        newly.push(finalUrl);
+        if (logEach) console.log('Added Pinterest pin:', finalUrl);
+      }
+    } catch {
+      /* ignore */
+    }
+  });
+
   return newly;
 }
 
@@ -325,6 +376,15 @@ function doScrollStep() {
     } catch {}
   }
 
+  // NEW: Incremental Pinterest pin discovery
+  const newlyPins = scanAndCollectPinterestPins(true);
+  if (newlyPins.length > 0) {
+    try {
+      browser.runtime.sendMessage({ type: 'pinterestNewLinks', links: newlyPins })
+        .catch(() => {});
+    } catch {}
+  }
+
   if (currentHeight > lastHeight) {
     lastHeight = currentHeight;
     lastChangeTime = Date.now();
@@ -478,6 +538,23 @@ browser.runtime.onMessage.addListener(async (message: any, _sender: any) => {
           }
           break;
         }
+
+        /** NEW: Pinterest helpers */
+        case 'collectPinterestLinks': {
+          const links = Array.from(collectedPinterestLinks);
+          resolve({ links });
+          break;
+        }
+        case 'resetPinterestState':
+          collectedPinterestLinks.clear();
+          resolve({ status: 'cleared' });
+          break;
+        case 'scanPinterestOnce': {
+          const links = scanAndCollectPinterestPins(true);
+          resolve({ links });
+          break;
+        }
+
         case 'ping':
           resolve({ status: 'pong' });
           break;

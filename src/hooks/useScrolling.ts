@@ -27,40 +27,72 @@ export function useScrolling(onScrollComplete?: () => void) {
     };
   }, []);
 
-  function startScrolling() {
-    browser.tabs.query({ active: true, currentWindow: true })
-      .then(tabs => {
-        const tabId = tabs[0]?.id;
-        if (tabId != null) {
-          return browser.tabs.sendMessage(tabId, { action: "startScrolling" });
-        }
-      })
-      .then(() => setScrollStatus('scrolling'))
-      .catch(err => console.error("Error starting scroll:", err));
+  async function startScrolling() {
+    try {
+      const tabs = await browser.tabs.query({ active: true, currentWindow: true });
+      const tabId = tabs[0]?.id;
+      if (tabId == null) return;
+  
+      // Preflight: make sure content script is alive on this page
+      try {
+        const pong = await browser.tabs.sendMessage(tabId, { action: "ping" }) as any;
+        if (!pong || pong.status !== "pong") throw new Error("no pong");
+      } catch (e) {
+        console.error("Content script not reachable for startScrolling:", e);
+        alert("This page isn't ready yet. Refresh the page and try again.");
+        return;
+      }
+  
+      await browser.tabs.sendMessage(tabId, { action: "startScrolling" });
+      setScrollStatus('scrolling');
+    } catch (err) {
+      console.error("Error starting scroll:", err);
+    }
   }
 
-  function startInstagramScrolling() {
-    browser.tabs.query({ active: true, currentWindow: true })
-      .then(tabs => {
-        const tabId = tabs[0]?.id;
-        if (tabId != null) {
-          return browser.tabs.sendMessage(tabId, { action: "startInstagramScrolling" });
-        }
-      })
-      .then(() => setScrollStatus('scrolling'))
-      .catch(err => console.error("Error starting Instagram scroll:", err));
+
+  async function startInstagramScrolling() {
+    try {
+      const tabs = await browser.tabs.query({ active: true, currentWindow: true });
+      const tabId = tabs[0]?.id;
+      if (tabId == null) return;
+  
+      try {
+        const pong = await browser.tabs.sendMessage(tabId, { action: "ping" }) as any;
+        if (!pong || pong.status !== "pong") throw new Error("no pong");
+      } catch (e) {
+        console.error("Content script not reachable for startInstagramScrolling:", e);
+        alert("This Instagram tab isn't ready yet. Refresh the page and try again.");
+        return;
+      }
+  
+      await browser.tabs.sendMessage(tabId, { action: "startInstagramScrolling" });
+      setScrollStatus('scrolling');
+    } catch (err) {
+      console.error("Error starting Instagram scroll:", err);
+    }
   }
 
-  function startYouTubeScrolling() {
-    browser.tabs.query({ active: true, currentWindow: true })
-      .then(tabs => {
-        const tabId = tabs[0]?.id;
-        if (tabId != null) {
-          return browser.tabs.sendMessage(tabId, { action: "startYouTubeScrolling" });
-        }
-      })
-      .then(() => setScrollStatus('scrolling'))
-      .catch(err => console.error("Error starting YouTube scroll:", err));
+  async function startYouTubeScrolling() {
+    try {
+      const tabs = await browser.tabs.query({ active: true, currentWindow: true });
+      const tabId = tabs[0]?.id;
+      if (tabId == null) return;
+  
+      try {
+        const pong = await browser.tabs.sendMessage(tabId, { action: "ping" }) as any;
+        if (!pong || pong.status !== "pong") throw new Error("no pong");
+      } catch (e) {
+        console.error("Content script not reachable for startYouTubeScrolling:", e);
+        alert("This YouTube tab isn't ready yet. Refresh the page and try again.");
+        return;
+      }
+  
+      await browser.tabs.sendMessage(tabId, { action: "startYouTubeScrolling" });
+      setScrollStatus('scrolling');
+    } catch (err) {
+      console.error("Error starting YouTube scroll:", err);
+    }
   }
 
   function stopResumeScrolling() {
