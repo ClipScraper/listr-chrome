@@ -1,5 +1,5 @@
 import * as React from 'react';
-import * as ReactDOM from 'react-dom';
+import { createRoot } from 'react-dom/client';
 import { Sun, Moon, Download, Ban, ListTodo, Play, Pause, Trash2, Plus } from 'lucide-react';
 import browser from 'webextension-polyfill';
 import { useActiveTab } from './hooks/useActiveTab';
@@ -50,6 +50,9 @@ const Popup: React.FC = () => {
   const youtubeCurrentCollection = React.useRef<string | null>(null);
   const tiktokPollIntervalRef = React.useRef<number | null>(null);
 
+  /** NEW: Pinterest active collection ref */
+  const pinterestActiveRef = React.useRef<{ name: string; type: 'bookmarks' | 'profile'; handle: string } | null>(null);
+
   const isTikTokDomain = activeUrl.startsWith("https://www.tiktok.com");
   const isInstagramDomain = activeUrl.startsWith("https://www.instagram.com");
   const isYouTubeDomain = /^https:\/\/www\.youtube\./.test(activeUrl);
@@ -95,66 +98,29 @@ const Popup: React.FC = () => {
       .catch(() => {});
   }, [activeUrl]);
 
-  // Pinterest: compute and update the header label according to the rules
+  // Pinterest: compute and update the header label ONLY on the base page
   React.useEffect(() => {
-    if (!isPinterestDomain) {
+    if (!isPinterestRoot) {
       setPinterestTitle('Pinterest');
       return;
     }
-
-    // Root: ask content script for selected tab label
-    if (isPinterestRoot) {
-      (async () => {
-        try {
-          const tabs = await browser.tabs.query({ active: true, currentWindow: true });
-          const tabId = tabs[0]?.id;
-          if (!tabId) {
-            setPinterestTitle('Pinterest');
-            return;
-          }
-          const res = await browser.tabs.sendMessage(tabId, { action: 'pinterestGetSection' }).catch(() => null) as any;
-          const section = (res?.section || '').trim();
-          setPinterestTitle(section ? `Pinterest - ${section}` : 'Pinterest');
-        } catch {
+    (async () => {
+      try {
+        const tabs = await browser.tabs.query({ active: true, currentWindow: true });
+        const tabId = tabs[0]?.id;
+        if (!tabId) return;
+        const res = await browser.tabs.sendMessage(tabId, { action: 'pinterestGetSection' }).catch(() => null) as any;
+        const section = (res?.section || '').trim();
+        if (section) {
+          setPinterestTitle(`Pinterest - ${section}`);
+        } else {
           setPinterestTitle('Pinterest');
         }
-      })();
-      return;
-    }
-
-    // Non-root: derive from URL
-    try {
-      const u = new URL(activeUrl);
-      const segs = u.pathname.split('/').filter(Boolean);
-
-      // /pin/{id}/
-      if (segs[0] === 'pin' && segs[1]) {
-        setPinterestTitle(`Pinterest: Pin ${segs[1]}`);
-        return;
+      } catch {
+        setPinterestTitle('Pinterest');
       }
-
-      // /search/pins/?q=...
-      if (segs[0] === 'search' && segs[1] === 'pins') {
-        const q = u.searchParams.get('q') || '';
-        const query = decodeURIComponent(q).trim();
-        setPinterestTitle(query ? `Pinterest: Search - ${query}` : 'Pinterest: Search');
-        return;
-      }
-
-      // /{user}/{board}/
-      if (segs.length >= 2) {
-        const user = decodeURIComponent(segs[0]);
-        const board = decodeURIComponent(segs[1]);
-        setPinterestTitle(`Pinterest: ${user} - ${board}`);
-        return;
-      }
-
-      // Fallback
-      setPinterestTitle('Pinterest');
-    } catch {
-      setPinterestTitle('Pinterest');
-    }
-  }, [activeUrl, isPinterestDomain, isPinterestRoot]);
+    })();
+  }, [activeUrl, isPinterestRoot]);
 
   // --- NEW: listen for pushes from the YouTube content script
   React.useEffect(() => {
@@ -303,10 +269,28 @@ const Popup: React.FC = () => {
           })();
         }
       }
+
+      /** NEW: Pinterest incremental push */
+      if (message.type === 'pinterestNewLinks') {
+        if (!isPinterestDomain) return;
+        const links: string[] = message.links || [];
+        if (links.length === 0) return;
+
+        const active = pinterestActiveRef.current;
+        if (active) {
+          ensureCollection('pinterest', active.name, { type: active.type, handle: active.handle });
+          addBookmarksToCollection('pinterest', active.name, links);
+          return;
+        }
+
+        // Fallback: dump into a generic bucket if no active collection set
+        ensureCollection('pinterest', 'pinterest_page', { type: 'profile', handle: 'Pinterest' });
+        addBookmarksToCollection('pinterest', 'pinterest_page', links);
+      }
     };
     browser.runtime.onMessage.addListener(handler);
     return () => browser.runtime.onMessage.removeListener(handler);
-  }, [activeUrl]);
+  }, [activeUrl, isPinterestDomain, isTikTokDomain, isInstagramDomain, isYouTubeDomain, isYouTubePlaylistPage]);
 
   const handleBookmarkAll = () => {
     browser.tabs.query({ active: true, currentWindow: true })
@@ -338,9 +322,74 @@ const Popup: React.FC = () => {
     });
   }, [activeUrl, ensureCollection, addBookmarksToCollection, pingContentScript, scrollStatus, startScrolling]);
 
+  /** NEW: Pinterest list button handler */
+  const handleCollectPinterestPins = React.useCallback(async () => {
+    try {
+      const u = new URL(activeUrl);
+      let collectionName = 'pinterest_page';
+      let handle = 'Pinterest';
+      let type: 'bookmarks' | 'profile' = 'profile';
+
+      if (/^\/pin\/(\d+)/.test(u.pathname)) {
+        const id = (u.pathname.match(/^\/pin\/(\d+)/) || [,''])[1];
+        collectionName = `pin_${id}`;
+        handle = `Pin ${id}`;
+        type = 'bookmarks';
+      } else if (/^\/([^/]+)\/([^/]+)\/?$/.test(u.pathname)) {
+        const m = u.pathname.match(/^\/([^/]+)\/([^/]+)\/?$/)!;
+        const user = decodeURIComponent(m[1]);
+        const board = decodeURIComponent(m[2]);
+        collectionName = `${user}_${board}`;
+        handle = `${user} - ${board}`;
+        type = 'profile';
+      } else if (u.pathname.startsWith('/search/pins')) {
+        const q = (u.searchParams.get('q') || '').trim();
+        if (q) {
+          collectionName = `search_${q}`;
+          handle = `Search - ${q}`;
+          type = 'profile';
+        }
+      } else if (u.pathname === '/') {
+        // Ask content script for selected home tab label
+        try {
+          const tabs = await browser.tabs.query({ active: true, currentWindow: true });
+          const tabId = tabs[0]?.id;
+          const res = tabId ? await browser.tabs.sendMessage(tabId, { action: 'pinterestGetSection' }).catch(() => null) as any : null;
+          const section = (res?.section || '').trim();
+          if (section) {
+            collectionName = `home_${section}`;
+            handle = section;
+          } else {
+            collectionName = 'home';
+            handle = 'Home';
+          }
+        } catch {
+          collectionName = 'home';
+          handle = 'Home';
+        }
+      }
+
+      pinterestActiveRef.current = { name: collectionName, type, handle };
+      ensureCollection('pinterest', collectionName, { type, handle });
+
+      // reset and start scroll
+      const tabs = await browser.tabs.query({ active: true, currentWindow: true });
+      const tabId = tabs[0]?.id;
+      if (tabId) {
+        await browser.tabs.sendMessage(tabId, { action: 'resetPinterestState' }).catch(() => null);
+      }
+
+      // Start the generic scroller (pins are discovered each tick)
+      startScrolling();
+    } catch (e) {
+      console.error('Error starting Pinterest collection:', e);
+    }
+  }, [activeUrl, ensureCollection, startScrolling]);
+
   const handleCancelListing = () => {
     cancelScrolling();
     tiktokActiveCollectionRef.current = null;
+    pinterestActiveRef.current = null;
     if (tiktokPollIntervalRef.current) {
       window.clearInterval(tiktokPollIntervalRef.current);
       tiktokPollIntervalRef.current = null;
@@ -392,6 +441,10 @@ const Popup: React.FC = () => {
     }
     if (platform === 'youtube') {
       return 'video';
+    }
+    if (platform === 'pinterest') {
+      // Pins are images/GIFs most of the time
+      return 'pictures';
     }
     return 'unknown';
   };
@@ -623,6 +676,11 @@ const Popup: React.FC = () => {
               <div className="instagram-buttons-row">
                 {scrollStatus === 'idle' && isInstagramDomain && (<button onClick={handleInstagramScrollAndCollect} className="theme-toggle-button" style={{ transform: 'scaleX(-1)' }}><ListTodo size={20} /></button>)}
                 {scrollStatus === 'idle' && isTikTokDomain && (<button onClick={handleCollectTiktokFavorites} className="theme-toggle-button" title="Collect favorites"><ListTodo size={20} /></button>)}
+                {scrollStatus === 'idle' && isPinterestDomain && (
+                  <button onClick={handleCollectPinterestPins} className="theme-toggle-button" title="List pins on this page">
+                    <ListTodo size={20} />
+                  </button>
+                )}
                 {scrollStatus === 'idle' && isYouTubeDomain && !isYouTubeVideoPage && !isYouTubeChannelPage && !isYouTubePlaylistPage && (
                   <button onClick={handleYouTubeListVideos} className="theme-toggle-button" title="List videos on this page">
                     <ListTodo size={20} />
@@ -687,6 +745,7 @@ const Popup: React.FC = () => {
                       {platform === 'instagram' && <img src="assets/instagram.webp" alt="Instagram" width={20} height={20} />}
                       {platform === 'tiktok' && <img src="assets/tiktok.webp" alt="TikTok" width={20} height={20} />}
                       {platform === 'youtube' && <img src="assets/youtube.webp" alt="YouTube" width={20} height={20} />}
+                      {platform === 'pinterest' && <img src="assets/pinterest.png" alt="Pinterest" width={20} height={20} />}
                       {platform === 'other' && <Ban size={20} />}
                     </td>
                     <td>{getCollectionMeta(platform, colName)?.type || 'profile'}</td>
@@ -746,4 +805,13 @@ const Popup: React.FC = () => {
   );
 };
 
-ReactDOM.render(<Popup />, document.getElementById('root'));
+export default Popup;
+const container = document.getElementById('root');
+if (container) {
+  const root = createRoot(container);
+  root.render(
+    <React.StrictMode>
+      <Popup />
+    </React.StrictMode>
+  );
+}
