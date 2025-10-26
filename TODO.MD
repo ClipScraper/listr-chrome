@@ -1,8 +1,6 @@
 - add settings: tempo for scroll
-- support pinterest
 - support twitter
 - instagram & tiktok story?
-- name collection file when downloading
 - suport é in names tiktok collection
 - button to open app when clicking button to dl list
 - youtube, need button scrape and button scrape+scroll
@@ -10,8 +8,6 @@
 
 
 - persistent renaming of rows
-- width of extension window to also display buttons
-
 
 Fix issue when google introduces ads link:
 youtube,playlist,Watch later,video,https://www.youtube.com/watch?v=mVrCPo8eB3A&pp=ugUEEgJlbg%3D%3D

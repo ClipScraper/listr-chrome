@@ -3,9 +3,9 @@
   "version": "1.0.0",
   "description": "Download TikTok videos (Chrome MV3).",
   "scripts": {
-    "build": "TIKTOKZE_ENV=development webpack --mode production",
-    "build:test": "TIKTOKZE_ENV=test webpack --mode production",
-    "build:prod": "TIKTOKZE_ENV=production webpack --mode production",
+    "build": "webpack --mode production",
+    "build:test": "webpack --mode production",
+    "build:prod": "webpack --mode production",
     "start": "webpack --mode development --watch",
     "typecheck": "tsc --noEmit",
     "package": "./scripts/package.sh"
