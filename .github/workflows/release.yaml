@@ -3,7 +3,7 @@ name: Release & Publish (CWS)
 on:
   push:
     tags:
-      - 'v*'            # push a tag like v1.2.3 to trigger
+      - 'v*'
 
 jobs:
   build-release:
@@ -21,7 +21,6 @@ jobs:
           node-version: 20
           cache: npm
 
-      # Sync versions from the tag (vX.Y.Z) into package.json and manifest.json
       - name: Set version from tag
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
@@ -32,11 +31,9 @@ jobs:
       - name: Install deps
         run: npm ci
 
-      # Build your production bundle
       - name: Build
         run: npm run build:prod
 
-      # Package to ZIP (uses your existing script)
       - name: Package ZIP
         run: ./scripts/package.sh production
 
@@ -54,7 +51,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # Upload the ZIP to the Chrome Web Store
       - name: Upload to CWS
         run: |
           npx --yes chrome-webstore-upload-cli@3 \
@@ -65,7 +61,6 @@ jobs:
             --client-secret "${{ secrets.CWS_CLIENT_SECRET }}" \
             --refresh-token "${{ secrets.CWS_REFRESH_TOKEN }}"
 
-      # Publish it (respects existing "Unlisted" visibility)
       - name: Publish on CWS
         run: |
           npx --yes chrome-webstore-upload-cli@3 \
