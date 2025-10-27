@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { createRoot } from 'react-dom/client';
-import { Sun, Moon, Download, Ban, ListTodo, Play, Pause, Trash2, Plus } from 'lucide-react';
+import { Sun, Moon, Download, Ban, ListTodo, Play, Pause, Trash2, Plus, Settings } from 'lucide-react';
 import browser from 'webextension-polyfill';
 import { useActiveTab } from './hooks/useActiveTab';
 import { useScrolling } from './hooks/useScrolling';
@@ -119,6 +119,7 @@ const Popup: React.FC = () => {
   const [youTubeTitle, setYouTubeTitle] = React.useState<string>(() => getYouTubePageTitle(activeUrl));
   const [youTubeErrorMessage, setYouTubeErrorMessage] = React.useState<string>('');
   const [pinterestTitle, setPinterestTitle] = React.useState<string>('Pinterest');
+  const [isSettingsOpen, setIsSettingsOpen] = React.useState<boolean>(false);
   const [editingCollection, setEditingCollection] = React.useState<{platform: string, collectionName: string} | null>(null);
   const [editingValue, setEditingValue] = React.useState<string>('');
 
@@ -727,6 +728,9 @@ const Popup: React.FC = () => {
           }} className="theme-toggle-button" aria-label="Clear all collections">
             <Trash2 size={20} />
           </button>
+        <button onClick={() => setIsSettingsOpen(prev => !prev)} className="theme-toggle-button" aria-label="Open settings">
+          <Settings size={20} />
+        </button>
 
           {(isInstagramDomain || isTikTokDomain || isYouTubeDomain || isPinterestDomain) && (
             <div className="instagram-controls-section">
@@ -775,70 +779,79 @@ const Popup: React.FC = () => {
           )}
         </div>
 
-        {/* Collections Display Table */}
-        <div className="collections-table-section">
-          <h3>Saved Collections</h3>
-          <table>
-            <thead>
-              <tr>
-                <th>Platform</th>
-                <th>Type</th>
-                <th>Handle</th>
-                <th>Items</th>
-                <th>Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {Object.keys(getAllCollections()).length === 0 && !youTubeErrorMessage && (
+        {/* Collections or Settings */}
+        {isSettingsOpen ? (
+          <div className="settings-section">
+            <h3>Settings</h3>
+            <div className="setting-row"><label>Setting 1</label><input className="setting-input" type="text" defaultValue="mock value" /></div>
+            <div className="setting-row"><label>Setting 2</label><input className="setting-input" type="text" defaultValue="mock value" /></div>
+            <div className="setting-row"><label>Setting 3</label><input className="setting-input" type="text" defaultValue="mock value" /></div>
+          </div>
+        ) : (
+          <div className="collections-table-section">
+            <h3>Saved Collections</h3>
+            <table>
+              <thead>
                 <tr>
-                  <td colSpan={5} style={{ textAlign: 'center', fontSize: '0.85rem', opacity: 0.7 }}>No collections yet</td>
+                  <th>Platform</th>
+                  <th>Type</th>
+                  <th>Handle</th>
+                  <th>Items</th>
+                  <th>Action</th>
                 </tr>
-              )}
-              {youTubeErrorMessage && (
-                <tr>
-                  <td colSpan={5} style={{ textAlign: 'center', fontSize: '0.85rem', color: '#ff6b6b', padding: '1rem' }}>
-                    {youTubeErrorMessage}
-                  </td>
-                </tr>
-              )}
-              {Object.entries(getAllCollections()).map(([platform, platformCollections]) => (
-                Object.entries(platformCollections).map(([colName, bookmarks]) => (
-                  <tr key={`${platform}-${colName}`}>
-                    <td>
-                      {platform === 'instagram' && <img src="assets/instagram.webp" alt="Instagram" width={20} height={20} />}
-                      {platform === 'tiktok' && <img src="assets/tiktok.webp" alt="TikTok" width={20} height={20} />}
-                      {platform === 'youtube' && <img src="assets/youtube.webp" alt="YouTube" width={20} height={20} />}
-                      {platform === 'pinterest' && <img src="assets/pinterest.png" alt="Pinterest" width={20} height={20} />}
-                      {platform === 'other' && <Ban size={20} />}
-                    </td>
-                    <td>{getCollectionMeta(platform, colName)?.type || 'profile'}</td>
-                    <td>
-                      {editingCollection?.platform === platform && editingCollection?.collectionName === colName ? (
-                        <input type="text" value={editingValue} onChange={(e) => setEditingValue(e.target.value)} onKeyDown={handleEditKeyPress} onBlur={saveCollectionEdit} className="collection-edit-input" autoFocus style={{width: '100%', fontSize: '0.85rem'}} />
-                      ) : (
-                        <span
-                          onClick={() => startEditingCollection(platform, colName)}
-                          style={{cursor: 'pointer', userSelect: 'none', padding: '0.25rem', borderRadius: '4px', transition: 'background-color 0.2s'}}
-                          title="Click to edit collection name"
-                          onMouseEnter={(e) => {e.currentTarget.style.backgroundColor = isDarkMode ? '#4a5568' : '#f0f0f0'}}
-                          onMouseLeave={(e) => {e.currentTarget.style.backgroundColor = 'transparent'}}>
-                          {getCollectionMeta(platform, colName)?.handle || colName}
-                        </span>
-                      )}
-                    </td>
-                    <td>{bookmarks.length}</td>
-                    <td>
-                      <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center', justifyContent: 'center' }}>
-                        <button onClick={() => deleteCollection(platform, colName)} className="theme-toggle-button" aria-label="Delete collection"><Trash2 size={18} /></button>
-                        <button onClick={() => downloadCollectionAsDetailedCsv(platform, colName)} className="theme-toggle-button" aria-label="Download data CSV"><Download size={18} /></button>
-                      </div>
+              </thead>
+              <tbody>
+                {Object.keys(getAllCollections()).length === 0 && !youTubeErrorMessage && (
+                  <tr>
+                    <td colSpan={5} style={{ textAlign: 'center', fontSize: '0.85rem', opacity: 0.7 }}>No collections yet</td>
+                  </tr>
+                )}
+                {youTubeErrorMessage && (
+                  <tr>
+                    <td colSpan={5} style={{ textAlign: 'center', fontSize: '0.85rem', color: '#ff6b6b', padding: '1rem' }}>
+                      {youTubeErrorMessage}
                     </td>
                   </tr>
-                ))
-              ))}
-            </tbody>
-          </table>
-        </div>
+                )}
+                {Object.entries(getAllCollections()).map(([platform, platformCollections]) => (
+                  Object.entries(platformCollections).map(([colName, bookmarks]) => (
+                    <tr key={`${platform}-${colName}`}>
+                      <td>
+                        {platform === 'instagram' && <img src="assets/instagram.webp" alt="Instagram" width={20} height={20} />}
+                        {platform === 'tiktok' && <img src="assets/tiktok.webp" alt="TikTok" width={20} height={20} />}
+                        {platform === 'youtube' && <img src="assets/youtube.webp" alt="YouTube" width={20} height={20} />}
+                        {platform === 'pinterest' && <img src="assets/pinterest.png" alt="Pinterest" width={20} height={20} />}
+                        {platform === 'other' && <Ban size={20} />}
+                      </td>
+                      <td>{getCollectionMeta(platform, colName)?.type || 'profile'}</td>
+                      <td>
+                        {editingCollection?.platform === platform && editingCollection?.collectionName === colName ? (
+                          <input type="text" value={editingValue} onChange={(e) => setEditingValue(e.target.value)} onKeyDown={handleEditKeyPress} onBlur={saveCollectionEdit} className="collection-edit-input" autoFocus style={{width: '100%', fontSize: '0.85rem'}} />
+                        ) : (
+                          <span
+                            onClick={() => startEditingCollection(platform, colName)}
+                            style={{cursor: 'pointer', userSelect: 'none', padding: '0.25rem', borderRadius: '4px', transition: 'background-color 0.2s'}}
+                            title="Click to edit collection name"
+                            onMouseEnter={(e) => {e.currentTarget.style.backgroundColor = isDarkMode ? '#4a5568' : '#f0f0f0'}}
+                            onMouseLeave={(e) => {e.currentTarget.style.backgroundColor = 'transparent'}}>
+                            {getCollectionMeta(platform, colName)?.handle || colName}
+                          </span>
+                        )}
+                      </td>
+                      <td>{bookmarks.length}</td>
+                      <td>
+                        <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center', justifyContent: 'center' }}>
+                          <button onClick={() => deleteCollection(platform, colName)} className="theme-toggle-button" aria-label="Delete collection"><Trash2 size={18} /></button>
+                          <button onClick={() => downloadCollectionAsDetailedCsv(platform, colName)} className="theme-toggle-button" aria-label="Download data CSV"><Download size={18} /></button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
 
       </div>
     </div>

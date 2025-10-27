@@ -21,7 +21,7 @@ case "$ENVIRONMENT" in
 esac
 
 echo "Building extension..."
-TIKTOKZE_ENV=$ENVIRONMENT npm run build --silent
+npm run build --silent
 
 NAME=$(node -e "console.log(require('./package.json').name)")
 VERSION=$(node -e "console.log(require('./package.json').version)")
