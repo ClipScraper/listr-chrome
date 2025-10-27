@@ -1,19 +1,21 @@
-name: Release & Publish (CWS)
+name: Release on PR Merge
 
 on:
-  push:
-    tags:
-      - 'v*'
+  pull_request:
+    types: [closed]
+    branches: [master]
 
 jobs:
-  build-release:
+  build-and-release:
+    if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     permissions:
-      contents: write   # needed to create the GitHub Release
-
+      contents: write
     steps:
-      - name: Checkout
+      - name: Checkout merge commit
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
 
       - name: Use Node.js 20
         uses: actions/setup-node@v4
@@ -21,51 +23,42 @@ jobs:
           node-version: 20
           cache: npm
 
-      - name: Set version from tag
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          jq --arg v "$VERSION" '.version=$v' package.json > package.json.tmp && mv package.json.tmp package.json
-          jq --arg v "$VERSION" '.version=$v' manifest.json > manifest.json.tmp && mv manifest.json.tmp manifest.json
-          echo "Version set to $VERSION"
-
       - name: Install deps
         run: npm ci
 
-      - name: Build
+      - name: Build (production)
         run: npm run build:prod
 
-      - name: Package ZIP
+      - name: Package extension ZIP
         run: ./scripts/package.sh production
 
       - name: Locate ZIP
         id: artifact
         run: |
           ZIP=$(ls -1 release/*.zip | head -n1)
-          echo "zip_path=$ZIP" >> $GITHUB_OUTPUT
-          echo "Found: $ZIP"
+          echo "zip_path=$ZIP" >> "$GITHUB_OUTPUT"
+          echo "zip_name=$(basename "$ZIP")" >> "$GITHUB_OUTPUT"
+
+      - name: Upload build artifact (optional)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.artifact.outputs.zip_name }}
+          path: ${{ steps.artifact.outputs.zip_path }}
+
+      - name: Create and push tag
+        run: |
+          TAG="pr-${{ github.event.pull_request.number }}-merge-${{ github.run_number }}"
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          git tag "$TAG" "${{ github.event.pull_request.merge_commit_sha }}"
+          git push origin "$TAG"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.TAG }}
+          name: "Auto release for PR #${{ github.event.pull_request.number }}"
+          body: |
+            Automatic release for PR #${{ github.event.pull_request.number }} merged into ${{ github.event.pull_request.base.ref }}.
+            - Commit: ${{ github.event.pull_request.merge_commit_sha }}
+            - Includes packaged extension ZIP suitable for store upload or manual use (unzip → Load Unpacked in chrome://extensions).
           files: ${{ steps.artifact.outputs.zip_path }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload to CWS
-        run: |
-          npx --yes chrome-webstore-upload-cli@3 \
-            upload \
-            --source "${{ steps.artifact.outputs.zip_path }}" \
-            --extension-id "${{ secrets.CWS_EXTENSION_ID }}" \
-            --client-id "${{ secrets.CWS_CLIENT_ID }}" \
-            --client-secret "${{ secrets.CWS_CLIENT_SECRET }}" \
-            --refresh-token "${{ secrets.CWS_REFRESH_TOKEN }}"
-
-      - name: Publish on CWS
-        run: |
-          npx --yes chrome-webstore-upload-cli@3 \
-            publish \
-            --extension-id "${{ secrets.CWS_EXTENSION_ID }}" \
-            --client-id "${{ secrets.CWS_CLIENT_ID }}" \
-            --client-secret "${{ secrets.CWS_CLIENT_SECRET }}" \
-            --refresh-token "${{ secrets.CWS_REFRESH_TOKEN }}"
