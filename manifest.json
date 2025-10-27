@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "My Extension",
+  "name": "listr",
   "version": "1.0.0",
   "description": "Displays a popup with bookmarks and more.",
   "icons": {

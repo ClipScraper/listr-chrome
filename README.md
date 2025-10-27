@@ -1,4 +1,4 @@
-# tiktok-downloader-chrome-extension (MV3)
+# listr
 
 ## Develop / Build
 

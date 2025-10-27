@@ -1,7 +1,7 @@
 {
-  "name": "tiktok-downloader-chrome-extension",
+  "name": "listr",
   "version": "1.0.0",
-  "description": "Download TikTok videos (Chrome MV3).",
+  "description": "Get bookmarks and favorites from your favorite social media platforms.",
   "scripts": {
     "build": "webpack --mode production",
     "build:test": "webpack --mode production",
