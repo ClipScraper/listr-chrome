@@ -1,20 +1,29 @@
-name: Release on PR Merge
+name: Release
 
 on:
+  push:
+    branches:
+      - '**'
   pull_request:
     types: [closed]
-    branches: [master]
+    branches:
+      - master
+      - main
 
 jobs:
-  build-and-release:
-    if: github.event.pull_request.merged == true
+  release:
+    if: |
+      (github.event_name == 'pull_request' && github.event.pull_request.merged) ||
+      (github.event_name == 'push' && contains(join(github.event.commits.*.message), '[release]'))
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: Checkout merge commit
+      - name: Checkout code
         uses: actions/checkout@v4
         with:
+          # On pull_request merge, checks out the merge commit.
+          # On push, this is empty and it checks out the triggering commit.
           ref: ${{ github.event.pull_request.merge_commit_sha }}
 
       - name: Use Node.js 20
@@ -23,7 +32,7 @@ jobs:
           node-version: 20
           cache: npm
 
-      - name: Install deps
+      - name: Install dependencies
         run: npm ci
 
       - name: Build (production)
@@ -32,33 +41,53 @@ jobs:
       - name: Package extension ZIP
         run: ./scripts/package.sh production
 
-      - name: Locate ZIP
+      - name: Locate ZIP file
         id: artifact
         run: |
-          ZIP=$(ls -1 release/*.zip | head -n1)
-          echo "zip_path=$ZIP" >> "$GITHUB_OUTPUT"
-          echo "zip_name=$(basename "$ZIP")" >> "$GITHUB_OUTPUT"
+          ZIP_PATH=$(ls -1 release/*.zip | head -n1)
+          echo "zip_path=$ZIP_PATH" >> "$GITHUB_OUTPUT"
+          echo "zip_name=$(basename "$ZIP_PATH")" >> "$GITHUB_OUTPUT"
 
-      - name: Upload build artifact (optional)
+      - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.artifact.outputs.zip_name }}
           path: ${{ steps.artifact.outputs.zip_path }}
 
+      - name: Generate Release Info
+        id: release_info
+        run: |
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            TAG="pr-${{ github.event.pull_request.number }}-merge-${{ github.run_number }}"
+            RELEASE_NAME="Auto release for PR #${{ github.event.pull_request.number }}"
+            RELEASE_BODY="Automatic release for PR #${{ github.event.pull_request.number }} merged into ${{ github.event.pull_request.base.ref }}.\n- Commit: ${{ github.event.pull_request.merge_commit_sha }}"
+          else
+            VERSION=$(node -e "console.log(require('./package.json').version)")
+            COMMIT_SHA_SHORT=$(echo "${{ github.sha }}" | cut -c1-7)
+            TAG="v${VERSION}-${COMMIT_SHA_SHORT}-${{ github.run_number }}"
+            RELEASE_NAME="Release $TAG"
+            RELEASE_BODY="Manual release triggered from commit [\`${COMMIT_SHA_SHORT}\`](${{ github.event.repository.html_url }}/commit/${{ github.sha }}).\n\n**Commit message:**\n${{ github.event.head_commit.message }}"
+          fi
+          echo "TAG=$TAG" >> "$GITHUB_OUTPUT"
+          echo "RELEASE_NAME=$RELEASE_NAME" >> "$GITHUB_OUTPUT"
+          # Using heredoc for multiline body
+          {
+            echo "RELEASE_BODY<<EOF"
+            echo -e "$RELEASE_BODY"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Create and push tag
         run: |
-          TAG="pr-${{ github.event.pull_request.number }}-merge-${{ github.run_number }}"
-          echo "TAG=$TAG" >> "$GITHUB_ENV"
-          git tag "$TAG" "${{ github.event.pull_request.merge_commit_sha }}"
-          git push origin "$TAG"
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+          git tag -a "${{ steps.release_info.outputs.TAG }}" -m "${{ steps.release_info.outputs.RELEASE_NAME }}"
+          git push origin "${{ steps.release_info.outputs.TAG }}"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ env.TAG }}
-          name: "Auto release for PR #${{ github.event.pull_request.number }}"
-          body: |
-            Automatic release for PR #${{ github.event.pull_request.number }} merged into ${{ github.event.pull_request.base.ref }}.
-            - Commit: ${{ github.event.pull_request.merge_commit_sha }}
-            - Includes packaged extension ZIP suitable for store upload or manual use (unzip → Load Unpacked in chrome://extensions).
+          tag_name: ${{ steps.release_info.outputs.TAG }}
+          name: ${{ steps.release_info.outputs.RELEASE_NAME }}
+          body: ${{ steps.release_info.outputs.RELEASE_BODY }}
           files: ${{ steps.artifact.outputs.zip_path }}
