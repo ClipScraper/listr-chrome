@@ -38,6 +38,9 @@ jobs:
       - name: Build (production)
         run: npm run build:prod
 
+      - name: Make package script executable
+        run: chmod +x scripts/package.sh
+
       - name: Package extension ZIP
         run: ./scripts/package.sh production
 
