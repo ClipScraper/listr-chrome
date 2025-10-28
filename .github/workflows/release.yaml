@@ -13,8 +13,17 @@ on:
 jobs:
   release:
     if: |
-      (github.event_name == 'pull_request' && github.event.pull_request.merged) ||
-      (github.event_name == 'push' && contains(join(github.event.commits.*.message), '[release]'))
+      (
+        github.event_name == 'pull_request' &&
+        github.event.pull_request.merged &&
+        !contains(github.event.pull_request.title, '[release]') &&
+        !contains(github.event.pull_request.title, '[no-release]')
+      ) ||
+      (
+        github.event_name == 'push' &&
+        contains(join(github.event.commits.*.message), '[release]') &&
+        !contains(join(github.event.commits.*.message), '[no-release]')
+      )
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -37,6 +46,9 @@ jobs:
 
       - name: Build (production)
         run: npm run build:prod
+
+      - name: Make package script executable
+        run: chmod +x scripts/package.sh
 
       - name: Package extension ZIP
         run: ./scripts/package.sh production

@@ -4,8 +4,6 @@
 - suport é in names tiktok collection
 - button to open app when clicking button to dl list
 - youtube, need button scrape and button scrape+scroll
-- add collection sorting so that the latest downloaded is always on top of the list
-
 
 - persistent renaming of rows
 
