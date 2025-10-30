@@ -112,9 +112,12 @@ const Popup: React.FC = () => {
 
   const isYouTubeVideoPage = isYouTubeDomain && activeUrl.includes('/watch?v=');
   const isYouTubePlaylistPage = isYouTubeDomain && activeUrl.includes('/playlist?list=');
-  const isYouTubeChannelPage = isYouTubeDomain && (
-    activeUrl.includes('/videos') || activeUrl.includes('/shorts') || activeUrl.includes('/streams')
-  );
+  const isYouTubeChannelPage =
+    isYouTubeDomain &&
+    (activeUrl.includes('/videos') ||
+      activeUrl.includes('/shorts') ||
+      activeUrl.includes('/streams') ||
+      /youtube\.com\/(user\/|@|channel\/)/.test(activeUrl));
 
   const [youTubeTitle, setYouTubeTitle] = React.useState<string>(() => getYouTubePageTitle(activeUrl));
   const [youTubeErrorMessage, setYouTubeErrorMessage] = React.useState<string>('');

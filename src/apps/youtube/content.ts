@@ -7,9 +7,13 @@ export function initYouTubeContent() {
     let name = '';
     let handle = '';
 
-    // Handle from URL like /@handle, /c/handle, or /channel/id
-    const urlMatch = location.pathname.match(/^\/(@[^/]+)|\/c\/([^/]+)|\/channel\/([^/]+)/);
-    const handleFromUrl = urlMatch ? urlMatch[1] || urlMatch[2] || urlMatch[3] : null;
+    // Handle from URL like /@handle, /c/handle, /user/handle, or /channel/id
+    const urlMatch = location.pathname.match(
+      /^\/(@[^/]+)|\/c\/([^/]+)|\/user\/([^/]+)|\/channel\/([^/]+)/
+    );
+    const handleFromUrl = urlMatch
+      ? urlMatch[1] || urlMatch[2] || urlMatch[3] || urlMatch[4]
+      : null;
     if (handleFromUrl) {
       handle = handleFromUrl;
     }
@@ -130,6 +134,19 @@ export function initYouTubeContent() {
     let last = '';
     return () => {
       const info = extractChannelInfo();
+      // Always get a handle
+      if (!info.handle) {
+        const urlMatch = location.pathname.match(
+          /^\/(@[^/]+)|\/c\/([^/]+)|\/user\/([^/]+)|\/channel\/([^/]+)/
+        );
+        const handleFromUrl = urlMatch
+          ? urlMatch[1] || urlMatch[2] || urlMatch[3] || urlMatch[4]
+          : null;
+        if (handleFromUrl) {
+          info.handle = handleFromUrl;
+        }
+      }
+
       const key = `${info.name}|${info.handle}`;
       if (key !== last) {
         last = key;
