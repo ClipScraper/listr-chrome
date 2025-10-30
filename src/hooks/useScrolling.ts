@@ -27,7 +27,7 @@ export function useScrolling(onScrollComplete?: () => void) {
     };
   }, []);
 
-  async function startScrolling() {
+  async function startScrolling(waitTime: number) {
     try {
       const tabs = await browser.tabs.query({ active: true, currentWindow: true });
       const tabId = tabs[0]?.id;
@@ -43,7 +43,7 @@ export function useScrolling(onScrollComplete?: () => void) {
         return;
       }
   
-      await browser.tabs.sendMessage(tabId, { action: "startScrolling" });
+      await browser.tabs.sendMessage(tabId, { action: "startScrolling", waitTime });
       setScrollStatus('scrolling');
     } catch (err) {
       console.error("Error starting scroll:", err);
@@ -51,7 +51,7 @@ export function useScrolling(onScrollComplete?: () => void) {
   }
 
 
-  async function startInstagramScrolling() {
+  async function startInstagramScrolling(waitTime: number) {
     try {
       const tabs = await browser.tabs.query({ active: true, currentWindow: true });
       const tabId = tabs[0]?.id;
@@ -66,14 +66,14 @@ export function useScrolling(onScrollComplete?: () => void) {
         return;
       }
   
-      await browser.tabs.sendMessage(tabId, { action: "startInstagramScrolling" });
+      await browser.tabs.sendMessage(tabId, { action: "startInstagramScrolling", waitTime });
       setScrollStatus('scrolling');
     } catch (err) {
       console.error("Error starting Instagram scroll:", err);
     }
   }
 
-  async function startYouTubeScrolling() {
+  async function startYouTubeScrolling(waitTime: number) {
     try {
       const tabs = await browser.tabs.query({ active: true, currentWindow: true });
       const tabId = tabs[0]?.id;
@@ -88,7 +88,7 @@ export function useScrolling(onScrollComplete?: () => void) {
         return;
       }
   
-      await browser.tabs.sendMessage(tabId, { action: "startYouTubeScrolling" });
+      await browser.tabs.sendMessage(tabId, { action: "startYouTubeScrolling", waitTime });
       setScrollStatus('scrolling');
     } catch (err) {
       console.error("Error starting YouTube scroll:", err);

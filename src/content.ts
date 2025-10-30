@@ -21,6 +21,7 @@ let lastChangeTime = 0;
 let scrollCount = 0;
 let timeRemaining = 0;
 let checkIntervalId: number | null = null;
+let scrollWaitTime = 3;
 
 /**
  * SELECTION MODE STATES
@@ -398,7 +399,7 @@ function doScrollStep() {
       return;
     }
   }
-  const nextDelayMs = 1000; // Reduced from 10000 and 5000 to 1000
+  const nextDelayMs = scrollWaitTime * 1000;
   timeRemaining = nextDelayMs / 1000;
   sendTimeUpdate(timeRemaining);
 }
@@ -438,6 +439,10 @@ browser.runtime.onMessage.addListener(async (message: any, _sender: any) => {
         // Resolve with no value to indicate we are not handling it here.
         resolve(undefined);
         return;
+      }
+
+      if (typeof message.waitTime === 'number' && message.waitTime >= 0) {
+        scrollWaitTime = message.waitTime;
       }
 
       switch (message?.action) {

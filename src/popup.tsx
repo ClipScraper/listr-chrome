@@ -126,11 +126,16 @@ const Popup: React.FC = () => {
   const [editingCollection, setEditingCollection] = React.useState<{platform: string, collectionName: string} | null>(null);
   const [editingValue, setEditingValue] = React.useState<string>('');
   const [validateBeforeClear, setValidateBeforeClear] = React.useState<boolean>(true);
+  const [scrollWaitTime, setScrollWaitTime] = React.useState<number>(3);
+
 
   React.useEffect(() => {
-    browser.storage.local.get('validateBeforeClear').then(result => {
+    browser.storage.local.get(['validateBeforeClear', 'scrollWaitTime']).then(result => {
       if (typeof result.validateBeforeClear === 'boolean') {
         setValidateBeforeClear(result.validateBeforeClear);
+      }
+      if (typeof result.scrollWaitTime === 'number') {
+        setScrollWaitTime(result.scrollWaitTime);
       }
     });
   }, []);
@@ -138,6 +143,14 @@ const Popup: React.FC = () => {
   const handleSetValidateBeforeClear = (value: boolean) => {
     setValidateBeforeClear(value);
     browser.storage.local.set({ validateBeforeClear: value });
+  };
+
+  const handleSetScrollWaitTime = (value: string) => {
+    const num = parseInt(value, 10);
+    if (!isNaN(num) && num >= 0) {
+      setScrollWaitTime(num);
+      browser.storage.local.set({ scrollWaitTime: num });
+    }
   };
 
   const onInstaCompleteCb = React.useCallback(() => iOnInstagramScrollComplete({
@@ -387,9 +400,9 @@ const Popup: React.FC = () => {
       setActiveCollection: (active: ActiveTikTokCollection | null) => { tiktokActiveCollectionRef.current = active; },
       pingContentScript,
       scrollStatus,
-      startScrolling,
+      startScrolling: () => startScrolling(scrollWaitTime),
     });
-  }, [activeUrl, ensureCollection, addBookmarksToCollection, pingContentScript, scrollStatus, startScrolling]);
+  }, [activeUrl, ensureCollection, addBookmarksToCollection, pingContentScript, scrollStatus, startScrolling, scrollWaitTime]);
 
   /** Pinterest list button handler */
   // FIXED: ensure /search/pins is handled BEFORE the generic 2-segment matcher
@@ -464,11 +477,11 @@ const Popup: React.FC = () => {
       if (tabId) {
         await browser.tabs.sendMessage(tabId, { action: 'resetPinterestState' }).catch(() => null);
       }
-      startScrolling();
+      startScrolling(scrollWaitTime);
     } catch (e) {
       console.error('Error starting Pinterest collection:', e);
     }
-  }, [activeUrl, ensureCollection, startScrolling]);
+  }, [activeUrl, ensureCollection, startScrolling, scrollWaitTime]);
 
   const handleCancelListing = () => {
     cancelScrolling();
@@ -535,9 +548,9 @@ const Popup: React.FC = () => {
   const handleInstagramScrollAndCollect = React.useCallback(() => iHandleInstagramScrollAndCollect({
     activeUrl,
     ensureCollection,
-    startInstagramScrolling,
+    startInstagramScrolling: () => startInstagramScrolling(scrollWaitTime),
     pingContentScript,
-  }), [activeUrl, ensureCollection, startInstagramScrolling]);
+  }), [activeUrl, ensureCollection, startInstagramScrolling, scrollWaitTime]);
 
   const handleYouTubeAddVideo = async () => {
     try {
@@ -579,7 +592,7 @@ const Popup: React.FC = () => {
           const collectionName = `${playlistName}_playlist`;
           ensureCollection('youtube', collectionName, { type: 'playlist', handle: playlistName });
         }
-        startYouTubeScrolling();
+        startYouTubeScrolling(scrollWaitTime);
       } catch (err) {
         console.error("Error starting YouTube playlist scroll:", err);
       }
@@ -601,7 +614,7 @@ const Popup: React.FC = () => {
           youtubeCurrentCollection.current = collectionName;
         }
         
-        startYouTubeScrolling();
+        startYouTubeScrolling(scrollWaitTime);
         
       } catch (err) {
         console.error("Error starting YouTube channel scroll:", err);
@@ -814,7 +827,16 @@ const Popup: React.FC = () => {
                 onChange={(e) => handleSetValidateBeforeClear(e.target.checked)}
               />
             </div>
-            <div className="setting-row"><label>Setting 2</label><input className="setting-input" type="text" defaultValue="mock value" /></div>
+            <div className="setting-row">
+              <label htmlFor="scroll-wait">Scroll interval time</label>
+              <input
+                id="scroll-wait"
+                className="setting-input"
+                type="number"
+                value={scrollWaitTime}
+                onChange={(e) => handleSetScrollWaitTime(e.target.value)}
+              />
+            </div>
             <div className="setting-row"><label>Setting 3</label><input className="setting-input" type="text" defaultValue="mock value" /></div>
           </div>
         ) : (
