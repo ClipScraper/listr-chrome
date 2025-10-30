@@ -127,15 +127,19 @@ const Popup: React.FC = () => {
   const [editingValue, setEditingValue] = React.useState<string>('');
   const [validateBeforeClear, setValidateBeforeClear] = React.useState<boolean>(true);
   const [scrollWaitTime, setScrollWaitTime] = React.useState<number>(3);
+  const [downloadFormat, setDownloadFormat] = React.useState<'csv' | 'json'>('csv');
 
 
   React.useEffect(() => {
-    browser.storage.local.get(['validateBeforeClear', 'scrollWaitTime']).then(result => {
+    browser.storage.local.get(['validateBeforeClear', 'scrollWaitTime', 'downloadFormat']).then(result => {
       if (typeof result.validateBeforeClear === 'boolean') {
         setValidateBeforeClear(result.validateBeforeClear);
       }
       if (typeof result.scrollWaitTime === 'number') {
         setScrollWaitTime(result.scrollWaitTime);
+      }
+      if (result.downloadFormat === 'csv' || result.downloadFormat === 'json') {
+        setDownloadFormat(result.downloadFormat);
       }
     });
   }, []);
@@ -150,6 +154,13 @@ const Popup: React.FC = () => {
     if (!isNaN(num) && num >= 0) {
       setScrollWaitTime(num);
       browser.storage.local.set({ scrollWaitTime: num });
+    }
+  };
+
+  const handleSetDownloadFormat = (value: string) => {
+    if (value === 'csv' || value === 'json') {
+      setDownloadFormat(value);
+      browser.storage.local.set({ downloadFormat: value });
     }
   };
 
@@ -613,9 +624,7 @@ const Popup: React.FC = () => {
           ensureCollection('youtube', collectionName, { type: 'profile', handle: channelName });
           youtubeCurrentCollection.current = collectionName;
         }
-        
         startYouTubeScrolling(scrollWaitTime);
-        
       } catch (err) {
         console.error("Error starting YouTube channel scroll:", err);
       }
@@ -641,10 +650,8 @@ const Popup: React.FC = () => {
         }
 
         setYouTubeErrorMessage('');
-
         const handle = channelName || 'profile';
         const collectionName = channelName ? `${handle}_videos` : 'youtube_recommendations';
-
         ensureCollection('youtube', collectionName, { type: 'recommendation', handle });
         addBookmarksToCollection('youtube', collectionName, videos.map(v => v.url));
       } else {
@@ -656,7 +663,7 @@ const Popup: React.FC = () => {
     }
   };
 
-  const downloadCollectionAsDetailedCsv = (platform: string, collectionName: string) => {
+  const downloadCollection = (platform: string, collectionName: string) => {
     const collectionsByPlatform = collectionStore.collections[platform];
     if (!collectionsByPlatform) return;
 
@@ -667,30 +674,41 @@ const Popup: React.FC = () => {
     }
 
     const meta = getCollectionMeta(platform, collectionName) || { type: 'profile', handle: collectionName } as any;
+    const filename = `${platform}.${collectionName}.data.${downloadFormat}`;
+    let blob: Blob;
 
-    const header = ["Platform", "Type", "Handle", "Media", "link"];
-    const rows = bookmarks.map(bm => {
-      const media = inferMediaType(platform, bm.url);
-      return [platform, meta.type, meta.handle, media, bm.url];
-    });
-
-    const csvContent = [header, ...rows]
-      .map(row => row.map(col => escapeCsv(String(col))).join(","))
-      .join("\n");
-
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    if (downloadFormat === 'json') {
+      const jsonData = {
+        platform,
+        collectionName,
+        meta,
+        items: bookmarks.map(bm => ({
+          url: bm.url,
+          mediaType: inferMediaType(platform, bm.url),
+        })),
+      };
+      blob = new Blob([JSON.stringify(jsonData, null, 2)], { type: "application/json;charset=utf-8;" });
+    } else {
+      const header = ["Platform", "Type", "Handle", "Media", "link"];
+      const rows = bookmarks.map(bm => {
+        const media = inferMediaType(platform, bm.url);
+        return [platform, meta.type, meta.handle, media, bm.url];
+      });
+      const csvContent = [header, ...rows]
+        .map(row => row.map(col => escapeCsv(String(col))).join(","))
+        .join("\n");
+      blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    }
+    
     const url = URL.createObjectURL(blob);
-
-    const filename = `${platform}.${collectionName}.data.csv`;
-
     browser.downloads.download({
       url: url,
       filename: filename,
       saveAs: true
-    }).catch(err => console.error("Error downloading detailed CSV:", err));
+    }).catch(err => console.error("Error downloading data:", err));
   };
 
-  const downloadAllCollectionsAsDetailedCsv = () => {
+  const downloadAllCollections = () => {
     const all = collectionStore.collections;
     const platforms = Object.keys(all);
     if (platforms.length === 0) {
@@ -698,43 +716,62 @@ const Popup: React.FC = () => {
       return;
     }
 
-    const header = ["Platform", "Type", "Handle", "Media", "link"];
-    const rows: string[][] = [];
-    for (const platform of platforms) {
-      const platformCollections = all[platform];
-      for (const collectionName of Object.keys(platformCollections)) {
-        const bookmarks = platformCollections[collectionName] || [];
-        const meta = getCollectionMeta(platform, collectionName) || { type: 'profile', handle: collectionName } as any;
-        for (const bm of bookmarks) {
-          const media = inferMediaType(platform, bm.url);
-          rows.push([
+    const filename = `all-collections.data.${downloadFormat}`;
+    let blob: Blob;
+
+    if (downloadFormat === 'json') {
+      const allData = [];
+      for (const platform of platforms) {
+        const platformCollections = all[platform];
+        for (const collectionName of Object.keys(platformCollections)) {
+          const bookmarks = platformCollections[collectionName] || [];
+          const meta = getCollectionMeta(platform, collectionName) || { type: 'profile', handle: collectionName } as any;
+          allData.push({
             platform,
-            String(meta.type),
-            String(meta.handle),
-            media,
-            bm.url,
-          ]);
+            collectionName,
+            meta,
+            items: bookmarks.map(bm => ({
+              url: bm.url,
+              mediaType: inferMediaType(platform, bm.url),
+            })),
+          });
         }
       }
+      if (allData.length === 0) {
+        alert("No links to download.");
+        return;
+      }
+      blob = new Blob([JSON.stringify(allData, null, 2)], { type: "application/json;charset=utf-8;" });
+    } else {
+      const header = ["Platform", "Type", "Handle", "Media", "link"];
+      const rows: string[][] = [];
+      for (const platform of platforms) {
+        const platformCollections = all[platform];
+        for (const collectionName of Object.keys(platformCollections)) {
+          const bookmarks = platformCollections[collectionName] || [];
+          const meta = getCollectionMeta(platform, collectionName) || { type: 'profile', handle: collectionName } as any;
+          for (const bm of bookmarks) {
+            const media = inferMediaType(platform, bm.url);
+            rows.push([platform, String(meta.type), String(meta.handle), media, bm.url]);
+          }
+        }
+      }
+      if (rows.length === 0) {
+        alert("No links to download.");
+        return;
+      }
+      const csvContent = [header, ...rows]
+        .map(row => row.map(col => escapeCsv(String(col))).join(","))
+        .join("\n");
+      blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     }
 
-    if (rows.length === 0) {
-      alert("No links to download.");
-      return;
-    }
-
-    const csvContent = [header, ...rows]
-      .map(row => row.map(col => escapeCsv(String(col))).join(","))
-      .join("\n");
-
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
-    const filename = `all-collections.data.csv`;
     browser.downloads.download({
       url,
       filename,
       saveAs: true
-    }).catch(err => console.error("Error downloading combined CSV:", err));
+    }).catch(err => console.error("Error downloading combined data:", err));
   };
 
   return (
@@ -750,7 +787,7 @@ const Popup: React.FC = () => {
           <button onClick={toggleTheme} className="theme-toggle-button">
             {isDarkMode ? <Sun /> : <Moon />}
           </button>
-          <button onClick={downloadAllCollectionsAsDetailedCsv} className="theme-toggle-button"><Download /></button>
+          <button onClick={downloadAllCollections} className="theme-toggle-button"><Download /></button>
           <button onClick={() => {
             if (validateBeforeClear) {
               if (confirm("Are you sure you want to clear all saved collections?")) {
@@ -817,27 +854,39 @@ const Popup: React.FC = () => {
         {isSettingsOpen ? (
           <div className="settings-section">
             <h3>Settings</h3>
-            <div className="setting-row">
-              <label htmlFor="validate-clear">Validate before clearing list</label>
-              <input
-                id="validate-clear"
-                className="setting-checkbox"
-                type="checkbox"
-                checked={validateBeforeClear}
-                onChange={(e) => handleSetValidateBeforeClear(e.target.checked)}
-              />
+            <div className="setting-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <label htmlFor="validate-clear" style={{ flex: '0 0 75%', flexShrink: 0 }}>Validate before clearing list</label>
+              <div style={{ flex: '1 1 auto', display: 'flex', justifyContent: 'flex-end', paddingRight: '5px' }}>
+                <input
+                  id="validate-clear"
+                  className="setting-checkbox"
+                  type="checkbox"
+                  checked={validateBeforeClear}
+                  onChange={(e) => handleSetValidateBeforeClear(e.target.checked)}
+                />
+              </div>
             </div>
-            <div className="setting-row">
-              <label htmlFor="scroll-wait">Scroll interval time</label>
-              <input
-                id="scroll-wait"
-                className="setting-input"
-                type="number"
-                value={scrollWaitTime}
-                onChange={(e) => handleSetScrollWaitTime(e.target.value)}
-              />
+            <div className="setting-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <label htmlFor="scroll-wait" style={{ flex: '0 0 75%', flexShrink: 0 }}>Scroll interval time</label>
+              <div style={{ flex: '1 1 auto', display: 'flex', justifyContent: 'flex-end', paddingRight: '5px' }}>
+                <input id="scroll-wait" className="setting-input" type="number" value={scrollWaitTime} onChange={(e) => handleSetScrollWaitTime(e.target.value)} style={{ maxWidth: '70px' }} />
+              </div>
             </div>
-            <div className="setting-row"><label>Setting 3</label><input className="setting-input" type="text" defaultValue="mock value" /></div>
+            <div className="setting-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <label htmlFor="download-format" style={{ flex: '0 0 75%', flexShrink: 0 }}>Download format</label>
+              <div style={{ flex: '1 1 auto', display: 'flex', justifyContent: 'flex-end', paddingRight: '5px' }}>
+                <select
+                  id="download-format"
+                  className="setting-input"
+                  value={downloadFormat}
+                  onChange={(e) => handleSetDownloadFormat(e.target.value)}
+                  style={{ maxWidth: '70px', width: '70px' }}
+                >
+                  <option value="csv">CSV</option>
+                  <option value="json">JSON</option>
+                </select>
+              </div>
+            </div>
           </div>
         ) : (
           <div className="collections-table-section">
@@ -870,10 +919,10 @@ const Popup: React.FC = () => {
                     <tr key={`${platform}-${colName}`}>
                       <td>
                         {platform === 'instagram' && <img src="assets/instagram.webp" alt="Instagram" width={20} height={20} />}
-                        {platform === 'tiktok' && <img src="assets/tiktok.webp" alt="TikTok" width={20} height={20} />}
-                        {platform === 'youtube' && <img src="assets/youtube.webp" alt="YouTube" width={20} height={20} />}
+                        {platform === 'tiktok'    && <img src="assets/tiktok.webp" alt="TikTok" width={20} height={20} />}
+                        {platform === 'youtube'   && <img src="assets/youtube.webp" alt="YouTube" width={20} height={20} />}
                         {platform === 'pinterest' && <img src="assets/pinterest.png" alt="Pinterest" width={20} height={20} />}
-                        {platform === 'other' && <Ban size={20} />}
+                        {platform === 'other'     && <Ban size={20} />}
                       </td>
                       <td>{getCollectionMeta(platform, colName)?.type || 'profile'}</td>
                       <td>
@@ -894,7 +943,7 @@ const Popup: React.FC = () => {
                       <td>
                         <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center', justifyContent: 'center' }}>
                           <button onClick={() => deleteCollection(platform, colName)} className="theme-toggle-button" aria-label="Delete collection"><Trash2 size={18} /></button>
-                          <button onClick={() => downloadCollectionAsDetailedCsv(platform, colName)} className="theme-toggle-button" aria-label="Download data CSV"><Download size={18} /></button>
+                          <button onClick={() => downloadCollection(platform, colName)} className="theme-toggle-button" aria-label="Download data CSV"><Download size={18} /></button>
                         </div>
                       </td>
                     </tr>
