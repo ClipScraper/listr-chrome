@@ -4,6 +4,8 @@
 - suport é in names tiktok collection
 - button to open app when clicking button to dl list
 - youtube, need button scrape and button scrape+scroll
+- Pinterest - Separate Find more ideas
+
 
 - persistent renaming of rows
 
