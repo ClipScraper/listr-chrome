@@ -125,6 +125,20 @@ const Popup: React.FC = () => {
   const [isSettingsOpen, setIsSettingsOpen] = React.useState<boolean>(false);
   const [editingCollection, setEditingCollection] = React.useState<{platform: string, collectionName: string} | null>(null);
   const [editingValue, setEditingValue] = React.useState<string>('');
+  const [validateBeforeClear, setValidateBeforeClear] = React.useState<boolean>(true);
+
+  React.useEffect(() => {
+    browser.storage.local.get('validateBeforeClear').then(result => {
+      if (typeof result.validateBeforeClear === 'boolean') {
+        setValidateBeforeClear(result.validateBeforeClear);
+      }
+    });
+  }, []);
+
+  const handleSetValidateBeforeClear = (value: boolean) => {
+    setValidateBeforeClear(value);
+    browser.storage.local.set({ validateBeforeClear: value });
+  };
 
   const onInstaCompleteCb = React.useCallback(() => iOnInstagramScrollComplete({
     activeUrl,
@@ -725,7 +739,11 @@ const Popup: React.FC = () => {
           </button>
           <button onClick={downloadAllCollectionsAsDetailedCsv} className="theme-toggle-button"><Download /></button>
           <button onClick={() => {
-            if (confirm("Are you sure you want to clear all saved collections?")) {
+            if (validateBeforeClear) {
+              if (confirm("Are you sure you want to clear all saved collections?")) {
+                Object.keys(getAllCollections()).forEach(platform => {Object.keys(getAllCollections()[platform]).forEach(collectionName => {deleteCollection(platform, collectionName);});});
+              }
+            } else {
               Object.keys(getAllCollections()).forEach(platform => {Object.keys(getAllCollections()[platform]).forEach(collectionName => {deleteCollection(platform, collectionName);});});
             }
           }} className="theme-toggle-button" aria-label="Clear all collections">
@@ -786,7 +804,16 @@ const Popup: React.FC = () => {
         {isSettingsOpen ? (
           <div className="settings-section">
             <h3>Settings</h3>
-            <div className="setting-row"><label>Setting 1</label><input className="setting-input" type="text" defaultValue="mock value" /></div>
+            <div className="setting-row">
+              <label htmlFor="validate-clear">Validate before clearing list</label>
+              <input
+                id="validate-clear"
+                className="setting-checkbox"
+                type="checkbox"
+                checked={validateBeforeClear}
+                onChange={(e) => handleSetValidateBeforeClear(e.target.checked)}
+              />
+            </div>
             <div className="setting-row"><label>Setting 2</label><input className="setting-input" type="text" defaultValue="mock value" /></div>
             <div className="setting-row"><label>Setting 3</label><input className="setting-input" type="text" defaultValue="mock value" /></div>
           </div>
