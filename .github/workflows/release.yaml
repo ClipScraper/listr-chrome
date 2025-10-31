@@ -1,39 +1,20 @@
 name: Release
 
 on:
-  push:
-    branches:
-      - '**'
   pull_request:
     types: [closed]
-    branches:
-      - master
-      - main
+    branches: [master]
+
+permissions:
+  contents: write
 
 jobs:
   release:
-    if: |
-      (
-        github.event_name == 'pull_request' &&
-        github.event.pull_request.merged &&
-        !contains(github.event.pull_request.title, '[release]') &&
-        !contains(github.event.pull_request.title, '[no-release]')
-      ) ||
-      (
-        github.event_name == 'push' &&
-        contains(join(github.event.commits.*.message), '[release]') &&
-        !contains(join(github.event.commits.*.message), '[no-release]')
-      )
+    if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          # On pull_request merge, checks out the merge commit.
-          # On push, this is empty and it checks out the triggering commit.
-          ref: ${{ github.event.pull_request.merge_commit_sha }}
 
       - name: Use Node.js 20
         uses: actions/setup-node@v4
@@ -45,89 +26,44 @@ jobs:
         run: npm ci
 
       - name: Build (production)
-        run: npm run build:prod
+        run: npm run build
 
       - name: Make package script executable
         run: chmod +x scripts/package.sh
 
       - name: Package extension ZIP
-        run: ./scripts/package.sh production
-
-      - name: Locate ZIP file
-        id: artifact
+        id: pkg
         run: |
-          ZIP_PATH=$(ls -1 release/*.zip | head -n1)
-          echo "zip_path=$ZIP_PATH" >> "$GITHUB_OUTPUT"
-          echo "zip_name=$(basename "$ZIP_PATH")" >> "$GITHUB_OUTPUT"
+          ./scripts/package.sh production
+          echo "zip=$(ls -1 release/*.zip | head -n1)" >> "$GITHUB_OUTPUT"
 
-      - name: Upload build artifact
+      - name: Read version from manifest
+        id: ver
+        run: echo "version=$(jq -r .version manifest.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload ZIP artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.artifact.outputs.zip_name }}
-          path: ${{ steps.artifact.outputs.zip_path }}
-
-      - name: Generate Release Info
-        id: release_info
-        run: |
-          if [ "${{ github.event_name }}" == "pull_request" ]; then
-            TAG="pr-${{ github.event.pull_request.number }}-merge-${{ github.run_number }}"
-            RELEASE_NAME="Auto release for PR #${{ github.event.pull_request.number }}"
-            RELEASE_BODY="Automatic release for PR #${{ github.event.pull_request.number }} merged into ${{ github.event.pull_request.base.ref }}.\n- Commit: ${{ github.event.pull_request.merge_commit_sha }}"
-          else
-            VERSION=$(node -e "console.log(require('./package.json').version)")
-            COMMIT_SHA_SHORT=$(echo "${{ github.sha }}" | cut -c1-7)
-            TAG="v${VERSION}-${COMMIT_SHA_SHORT}-${{ github.run_number }}"
-            RELEASE_NAME="Release $TAG"
-            RELEASE_BODY="Manual release triggered from commit [\`${COMMIT_SHA_SHORT}\`](${{ github.event.repository.html_url }}/commit/${{ github.sha }}).\n\n**Commit message:**\n${{ github.event.head_commit.message }}"
-          fi
-          echo "TAG=$TAG" >> "$GITHUB_OUTPUT"
-          echo "RELEASE_NAME=$RELEASE_NAME" >> "$GITHUB_OUTPUT"
-          # Using heredoc for multiline body
-          {
-            echo "RELEASE_BODY<<EOF"
-            echo -e "$RELEASE_BODY"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Create and push tag
-        run: |
-          git config user.name "${{ github.actor }}"
-          git config user.email "${{ github.actor }}@users.noreply.github.com"
-          git tag -a "${{ steps.release_info.outputs.TAG }}" -m "${{ steps.release_info.outputs.RELEASE_NAME }}"
-          git push origin "${{ steps.release_info.outputs.TAG }}"
+          name: extension-zip
+          path: ${{ steps.pkg.outputs.zip }}
+          if-no-files-found: error
+          compression-level: 0
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.release_info.outputs.TAG }}
-          name: ${{ steps.release_info.outputs.RELEASE_NAME }}
-          body: ${{ steps.release_info.outputs.RELEASE_BODY }}
-          files: ${{ steps.artifact.outputs.zip_path }}
+          tag_name: v${{ steps.ver.outputs.version }}-${{ github.sha }}
+          name: v${{ steps.ver.outputs.version }} (PR #${{ github.event.pull_request.number }})
+          generate_release_notes: true
+          files: ${{ steps.pkg.outputs.zip }}
 
-      - name: Upload & publish to Chrome Web Store
-        env:
-            ZIP_PATH: ${{ steps.artifact.outputs.zip_path }}
-            EXT_ID: ${{ secrets.CWS_EXTENSION_ID }}
-            CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}
-            CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
-            REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}
-        run: |
-            set -euo pipefail
-            ACCESS_TOKEN=$(curl -sS -X POST https://oauth2.googleapis.com/token \
-              -d client_id="$CLIENT_ID" \
-              -d client_secret="$CLIENT_SECRET" \
-              -d refresh_token="$REFRESH_TOKEN" \
-              -d grant_type=refresh_token | jq -r .access_token)
-  
-            curl -sS -X PUT \
-              -H "Authorization: Bearer $ACCESS_TOKEN" \
-              -H "x-goog-api-version: 2" \
-              -H "Content-Type: application/zip" \
-              --data-binary @"$ZIP_PATH" \
-              "https://www.googleapis.com/upload/chromewebstore/v1.1/items/$EXT_ID"
-  
-            curl -sS -X POST \
-              -H "Authorization: Bearer $ACCESS_TOKEN" \
-              -H "x-goog-api-version: 2" \
-              -H "Content-Length: 0" \
-              "https://www.googleapis.com/chromewebstore/v1.1/items/$EXT_ID/publish?publishTarget=default"
+      - name: Upload to Chrome Web Store (optional)
+        if: ${{ secrets.CHROME_CLIENT_ID != '' && secrets.CHROME_CLIENT_SECRET != '' && secrets.CHROME_REFRESH_TOKEN != '' && secrets.CHROME_EXTENSION_ID != '' }}
+        uses: Klemensas/chrome-extension-deploy@v2
+        with:
+          refresh-token: ${{ secrets.CHROME_REFRESH_TOKEN }}
+          client-id: ${{ secrets.CHROME_CLIENT_ID }}
+          client-secret: ${{ secrets.CHROME_CLIENT_SECRET }}
+          file-name: ${{ steps.pkg.outputs.zip }}
+          app-id: ${{ secrets.CHROME_EXTENSION_ID }}
+          publish: true

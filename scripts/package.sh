@@ -1,46 +1,62 @@
-#!/bin/bash
-
+#!/usr/bin/env bash
 set -euo pipefail
 
-ENVIRONMENT=${1:-production}
-ROOT_DIR=$(cd "$(dirname "$0")/.." && pwd)
-RELEASE_DIR="$ROOT_DIR/release"
-DIST_DIR="$ROOT_DIR/dist"
+MODE="${1:-production}"
 
-echo "Packaging environment: $ENVIRONMENT"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
 
-cd "$ROOT_DIR"
+if ! command -v jq >/dev/null 2>&1; then
+  echo "jq is required (to read manifest.json)." >&2
+  exit 1
+fi
 
-echo "Cleaning dist and release directories..."
-rm -rf "$DIST_DIR" "$RELEASE_DIR"
+VERSION="$(jq -r .version manifest.json)"
+NAME_RAW="$(jq -r .name manifest.json)"
+NAME="$(echo "$NAME_RAW" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-_' | sed -E 's/_+/-/g' | sed -E 's/-+/-/g')"
+[ -n "$NAME" ] || NAME="extension"
+
+DIST="$ROOT/dist"
+RELEASE_DIR="$ROOT/release"
+ZIP_PATH="$RELEASE_DIR/${NAME}-${VERSION}-${MODE}.zip"
+
+echo "Packaging environment: $MODE"
 mkdir -p "$RELEASE_DIR"
 
-case "$ENVIRONMENT" in
-  development|test|production) ;;
-  *) echo "Unknown environment: $ENVIRONMENT (use development|test|production)"; exit 1;;
-esac
+if [ ! -d "$DIST" ]; then
+  echo "dist/ not found; running build once…"
+  npm run build
+fi
 
-echo "Building extension..."
-npm run build --silent
+echo "Preparing package content…"
+cp -f "$ROOT/manifest.json" "$DIST/"
 
-NAME=$(node -e "console.log(require('./package.json').name)")
-VERSION=$(node -e "console.log(require('./package.json').version)")
-ZIP_NAME="$NAME-$VERSION-$ENVIRONMENT.zip"
+if [ -d "$ROOT/icons" ]; then
+  echo "Copying icons/ → dist/icons/"
+  mkdir -p "$DIST/icons"
+  cp -R "$ROOT/icons/." "$DIST/icons/"
+else
+  echo "No icons/ directory; skipping."
+fi
 
-echo "Creating zip: $ZIP_NAME"
-TEMP_DIR=$(mktemp -d)
-trap 'rm -rf "$TEMP_DIR"' EXIT
+if [ -d "$ROOT/assets" ]; then
+  echo "Copying assets/ → dist/assets/"
+  mkdir -p "$DIST/assets"
+  cp -R "$ROOT/assets/." "$DIST/assets/"
+fi
 
-# Copy required files into temp staging directory
-mkdir -p "$TEMP_DIR"
-cp -a manifest.json popup.html icons assets "$TEMP_DIR/"
-cp -a dist "$TEMP_DIR/"
+if [ -d "$ROOT/public" ]; then
+  echo "Copying public/ → dist/"
+  cp -R "$ROOT/public/." "$DIST/"
+fi
 
-# Optional: include README and LICENSE
-if [ -f README.md ]; then cp README.md "$TEMP_DIR/"; fi
-if [ -f LICENSE ]; then cp LICENSE "$TEMP_DIR/"; fi
+for f in popup.html options.html background.html; do
+  if [ -f "$ROOT/$f" ]; then
+    cp -f "$ROOT/$f" "$DIST/"
+  fi
+done
 
-mkdir -p "$RELEASE_DIR"
-(cd "$TEMP_DIR" && zip -q -r "$RELEASE_DIR/$ZIP_NAME" .)
-
-echo "Done: $RELEASE_DIR/$ZIP_NAME"
+echo "Creating zip: $(basename "$ZIP_PATH")"
+cd "$DIST"
+zip -qr9 "$ZIP_PATH" .
+echo "✅ Created: $ZIP_PATH"

@@ -1,6 +1,6 @@
 {
   "name": "listr",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "Get bookmarks and favorites from your favorite social media platforms.",
   "scripts": {
     "build": "webpack --mode production",
@@ -8,7 +8,8 @@
     "build:prod": "webpack --mode production",
     "start": "webpack --mode development --watch",
     "typecheck": "tsc --noEmit",
-    "package": "./scripts/package.sh"
+    "package": "./scripts/package.sh",
+    "prepare": "husky"
   },
   "dependencies": {
     "lucide-react": "^0.477.0",
@@ -22,6 +23,7 @@
     "@types/webextension-polyfill": "^0.12.3",
     "autoprefixer": "^10.4.20",
     "css-loader": "^7.1.2",
+    "husky": "^9.1.7",
     "postcss": "^8.4.49",
     "postcss-loader": "^8.1.1",
     "style-loader": "^4.0.0",
