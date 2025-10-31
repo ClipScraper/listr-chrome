@@ -1,12 +1,20 @@
+name: Version bump on PR
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, labeled, ready_for_review]
+    branches: ["**"]
+
+permissions:
+  contents: write
+  pull-requests: write
+
 jobs:
   bump:
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event.pull_request.head.repo.full_name == github.repository && !github.event.pull_request.draft
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
     steps:
-      - name: Checkout PR branch (read-only)
+      - name: Checkout PR branch
         uses: actions/checkout@v4
         with:
           ref: ${{ github.head_ref }}
@@ -22,7 +30,6 @@ jobs:
             *release:major*) bump=major ;;
             *release:minor*) bump=minor ;;
           esac
-
           current=$(jq -r .version manifest.json)
           IFS='.' read -r MA MI PA <<<"$current"
           case "$bump" in
@@ -31,8 +38,6 @@ jobs:
             patch) PA=$((PA+1)) ;;
           esac
           next="${MA}.${MI}.${PA}"
-
-          echo "current=$current"; echo "next=$next"; echo "bump=$bump"
           echo "next=$next" >> "$GITHUB_OUTPUT"
 
       - name: Apply version bump to files
@@ -51,13 +56,8 @@ jobs:
           title: chore: bump version to ${{ steps.prep.outputs.next }} for PR #${{ github.event.pull_request.number }}
           body: Automated version bump for #${{ github.event.pull_request.number }}.
           branch: bot/bump-${{ steps.prep.outputs.next }}-for-${{ github.head_ref }}
-          base: ${{ github.head_ref }}   # open PR into the contributor's PR branch
+          base: ${{ github.head_ref }}
           delete-branch: true
           draft: false
           labels: automated
-
-      - name: Try to enable auto-merge
-        if: steps.cpr.outputs.pull-request-number != ''
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh pr merge ${{ steps.cpr.outputs.pull-request-number }} --auto --squash --delete-branch || true
+          signoff: true
