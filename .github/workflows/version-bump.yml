@@ -1,70 +1,82 @@
-name: Auto-bump manifest.json version in PR
+name: PR — Bump manifest version
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, synchronize, reopened, labeled]
 
 permissions:
-  contents: write   # needed to push back to the PR branch
+  contents: write
+  pull-requests: write
 
 jobs:
   bump:
-    # Only try to push if the PR branch is in this repo (not a fork)
+    # Skip forks; only bump when PR branch is in this repo
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout PR head branch (not merge commit)
+      - name: Checkout PR branch
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.ref }}
-          persist-credentials: false
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      # Optional: if your repo requires "Verified" commits, import a GPG key
-      # Put your armored private key in repo/org secret GPG_PRIVATE_KEY and passphrase in GPG_PASSPHRASE
-      - name: Import GPG key (optional, for Verified commits)
-        if: ${{ secrets.GPG_PRIVATE_KEY && secrets.GPG_PASSPHRASE }}
-        uses: crazy-max/ghaction-import-gpg@v6
-        with:
-          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
-          passphrase: ${{ secrets.GPG_PASSPHRASE }}
-          git_user_signingkey: true
-          git_commit_gpgsign: true
-
-      - name: Bump manifest.json (patch)
+      - name: Bump version in manifest.json (and package.json if present) with Verified commit
         id: bump
-        run: |
-          test -f manifest.json || { echo "manifest.json not found"; exit 1; }
-          node - <<'NODE'
-          const fs = require('fs');
-          const p = 'manifest.json';
-          const m = JSON.parse(fs.readFileSync(p, 'utf8'));
-          const parts = (m.version || '0.0.0').split('.').map(n => parseInt(n,10)||0);
-          while (parts.length < 3) parts.push(0);
-          parts[2] += 1;                  // patch++
-          m.version = parts.join('.');
-          fs.writeFileSync(p, JSON.stringify(m, null, 2) + '\n');
-          console.log('NEW_VERSION=' + m.version);
-          NODE
-          NEW_VERSION=$(node -e "console.log(JSON.parse(require('fs').readFileSync('manifest.json','utf8')).version)")
-          echo "new_version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Commit change
-        run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add manifest.json
-          git commit -m "chore: bump manifest version to ${{ steps.bump.outputs.new_version }} [skip ci]" || echo "No changes to commit"
-
-      - name: Push back to PR branch
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.head_ref }}
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
         run: |
-          # push to the contributor's branch in *this* repo
-          git push "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" \
-            HEAD:${{ github.event.pull_request.head.ref }}
+          set -euo pipefail
+
+          # choose bump from labels (default = patch)
+          bump="patch"
+          case "$LABELS" in
+            *release:major*) bump="major" ;;
+            *release:minor*) bump="minor" ;;
+            *) bump="patch" ;;
+          esac
+
+          bump_file () {
+            local path="$1"
+
+            # Read file from PR branch; if it doesn't exist, skip.
+            if ! json=$(gh api -H "Accept: application/vnd.github+json" \
+                    "/repos/$REPO/contents/$path?ref=$BRANCH" 2>/dev/null); then
+              echo "skip $path (not found)"; return 0
+            fi
+
+            local sha=$(echo "$json" | jq -r .sha)
+            local content=$(echo "$json" | jq -r .content | tr -d '\n' | base64 --decode)
+            local current=$(echo "$content" | jq -r .version)
+
+            if [[ "$current" == "null" || -z "$current" ]]; then
+              echo "skip $path (no .version field)"; return 0
+            fi
+
+            IFS='.' read -r MA MI PA <<<"$current"
+            case "$bump" in
+              major) MA=$((MA+1)); MI=0; PA=0 ;;
+              minor) MI=$((MI+1)); PA=0 ;;
+              patch) PA=$((PA+1)) ;;
+            esac
+            local next="${MA}.${MI}.${PA}"
+
+            local updated=$(echo "$content" | jq --arg v "$next" '.version=$v')
+            local b64=$(echo "$updated" | base64 -w 0)
+
+            # Use GitHub Contents API so the commit is GitHub-signed (Verified)
+            gh api --method PUT -H "Accept: application/vnd.github+json" \
+              "/repos/$REPO/contents/$path" \
+              -f message="chore: bump $path version to $next" \
+              -f content="$b64" \
+              -f sha="$sha" \
+              -f branch="$BRANCH" >/dev/null
+
+            echo "Bumped $path → $next"
+            echo "next=$next" >> "$GITHUB_OUTPUT"
+          }
+
+          bump_file manifest.json
+          bump_file package.json || true
