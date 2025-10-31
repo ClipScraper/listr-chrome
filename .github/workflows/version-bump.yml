@@ -1,0 +1,70 @@
+name: Auto-bump manifest.json version in PR
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: write   # needed to push back to the PR branch
+
+jobs:
+  bump:
+    # Only try to push if the PR branch is in this repo (not a fork)
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout PR head branch (not merge commit)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # Optional: if your repo requires "Verified" commits, import a GPG key
+      # Put your armored private key in repo/org secret GPG_PRIVATE_KEY and passphrase in GPG_PASSPHRASE
+      - name: Import GPG key (optional, for Verified commits)
+        if: ${{ secrets.GPG_PRIVATE_KEY && secrets.GPG_PASSPHRASE }}
+        uses: crazy-max/ghaction-import-gpg@v6
+        with:
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.GPG_PASSPHRASE }}
+          git_user_signingkey: true
+          git_commit_gpgsign: true
+
+      - name: Bump manifest.json (patch)
+        id: bump
+        run: |
+          test -f manifest.json || { echo "manifest.json not found"; exit 1; }
+          node - <<'NODE'
+          const fs = require('fs');
+          const p = 'manifest.json';
+          const m = JSON.parse(fs.readFileSync(p, 'utf8'));
+          const parts = (m.version || '0.0.0').split('.').map(n => parseInt(n,10)||0);
+          while (parts.length < 3) parts.push(0);
+          parts[2] += 1;                  // patch++
+          m.version = parts.join('.');
+          fs.writeFileSync(p, JSON.stringify(m, null, 2) + '\n');
+          console.log('NEW_VERSION=' + m.version);
+          NODE
+          NEW_VERSION=$(node -e "console.log(JSON.parse(require('fs').readFileSync('manifest.json','utf8')).version)")
+          echo "new_version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Commit change
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add manifest.json
+          git commit -m "chore: bump manifest version to ${{ steps.bump.outputs.new_version }} [skip ci]" || echo "No changes to commit"
+
+      - name: Push back to PR branch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # push to the contributor's branch in *this* repo
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" \
+            HEAD:${{ github.event.pull_request.head.ref }}

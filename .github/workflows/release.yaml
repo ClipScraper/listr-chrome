@@ -103,3 +103,31 @@ jobs:
           name: ${{ steps.release_info.outputs.RELEASE_NAME }}
           body: ${{ steps.release_info.outputs.RELEASE_BODY }}
           files: ${{ steps.artifact.outputs.zip_path }}
+
+      - name: Upload & publish to Chrome Web Store
+        env:
+            ZIP_PATH: ${{ steps.artifact.outputs.zip_path }}
+            EXT_ID: ${{ secrets.CWS_EXTENSION_ID }}
+            CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}
+            CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
+            REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}
+        run: |
+            set -euo pipefail
+            ACCESS_TOKEN=$(curl -sS -X POST https://oauth2.googleapis.com/token \
+              -d client_id="$CLIENT_ID" \
+              -d client_secret="$CLIENT_SECRET" \
+              -d refresh_token="$REFRESH_TOKEN" \
+              -d grant_type=refresh_token | jq -r .access_token)
+  
+            curl -sS -X PUT \
+              -H "Authorization: Bearer $ACCESS_TOKEN" \
+              -H "x-goog-api-version: 2" \
+              -H "Content-Type: application/zip" \
+              --data-binary @"$ZIP_PATH" \
+              "https://www.googleapis.com/upload/chromewebstore/v1.1/items/$EXT_ID"
+  
+            curl -sS -X POST \
+              -H "Authorization: Bearer $ACCESS_TOKEN" \
+              -H "x-goog-api-version: 2" \
+              -H "Content-Length: 0" \
+              "https://www.googleapis.com/chromewebstore/v1.1/items/$EXT_ID/publish?publishTarget=default"
