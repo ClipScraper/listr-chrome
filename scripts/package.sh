@@ -23,38 +23,33 @@ ZIP_PATH="$RELEASE_DIR/${NAME}-${VERSION}-${MODE}.zip"
 echo "Packaging environment: $MODE"
 mkdir -p "$RELEASE_DIR"
 
-# Ensure dist exists (CI should have built already)
 if [ ! -d "$DIST" ]; then
   echo "dist/ not found; running build once…"
   npm run build
 fi
 
 echo "Preparing package content…"
-
-# Always include manifest.json in dist/
 cp -f "$ROOT/manifest.json" "$DIST/"
 
-# Copy icons/ if present (legacy layout)
 if [ -d "$ROOT/icons" ]; then
   echo "Copying icons/ → dist/icons/"
   mkdir -p "$DIST/icons"
   cp -R "$ROOT/icons/." "$DIST/icons/"
+else
+  echo "No icons/ directory; skipping."
 fi
 
-# Copy assets/ (common layout for icons/images)
 if [ -d "$ROOT/assets" ]; then
   echo "Copying assets/ → dist/assets/"
   mkdir -p "$DIST/assets"
   cp -R "$ROOT/assets/." "$DIST/assets/"
 fi
 
-# Copy public/ (static html or images)
 if [ -d "$ROOT/public" ]; then
   echo "Copying public/ → dist/"
   cp -R "$ROOT/public/." "$DIST/"
 fi
 
-# If those HTML files live at repo root, include them too
 for f in popup.html options.html background.html; do
   if [ -f "$ROOT/$f" ]; then
     cp -f "$ROOT/$f" "$DIST/"
@@ -64,5 +59,4 @@ done
 echo "Creating zip: $(basename "$ZIP_PATH")"
 cd "$DIST"
 zip -qr9 "$ZIP_PATH" .
-
 echo "✅ Created: $ZIP_PATH"
