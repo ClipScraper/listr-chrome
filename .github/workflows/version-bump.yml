@@ -1,4 +1,4 @@
-name: PR — Bump manifest version
+name: PR — Bump manifest version via nested PR
 
 on:
   pull_request:
@@ -10,73 +10,110 @@ permissions:
 
 jobs:
   bump:
-    # Skip forks; only bump when PR branch is in this repo
+    # Only run for PRs whose source branch is in this repo (not forks)
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout PR branch
+      - name: Checkout PR branch (read-only)
         uses: actions/checkout@v4
         with:
           ref: ${{ github.head_ref }}
           fetch-depth: 0
 
-      - name: Bump version in manifest.json (and package.json if present) with Verified commit
+      - name: Open bump PR (no direct push to protected refs)
         id: bump
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          BRANCH: ${{ github.head_ref }}
-          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_REF: ${{ github.head_ref }}
         run: |
           set -euo pipefail
 
-          # choose bump from labels (default = patch)
+          # Helpers
+          api() { gh api -H "Accept: application/vnd.github+json" "$@"; }
+
+          # Decide bump level from PR labels (default patch)
+          labels=$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | paste -sd, - || true)
           bump="patch"
-          case "$LABELS" in
+          case "$labels" in
             *release:major*) bump="major" ;;
             *release:minor*) bump="minor" ;;
             *) bump="patch" ;;
           esac
+          echo "Bump level: $bump"
 
-          bump_file () {
-            local path="$1"
+          # Get latest HEAD sha of the PR branch
+          head_json=$(api "/repos/$REPO/git/ref/heads/$HEAD_REF")
+          head_sha=$(jq -r '.object.sha' <<<"$head_json")
 
-            # Read file from PR branch; if it doesn't exist, skip.
-            if ! json=$(gh api -H "Accept: application/vnd.github+json" \
-                    "/repos/$REPO/contents/$path?ref=$BRANCH" 2>/dev/null); then
-              echo "skip $path (not found)"; return 0
+          # Read manifest.json from PR branch
+          manifest_json=$(api "/repos/$REPO/contents/manifest.json?ref=$HEAD_REF")
+          manifest_sha=$(jq -r .sha <<<"$manifest_json")
+          manifest_raw=$(jq -r .content <<<"$manifest_json" | tr -d '\n' | base64 --decode)
+          current=$(jq -r .version <<<"$manifest_raw")
+          if [[ -z "$current" || "$current" == "null" ]]; then
+            echo "::notice title=Skip::manifest.json has no .version field"; exit 0
+          fi
+          IFS='.' read -r MA MI PA <<<"$current"
+          case "$bump" in
+            major) MA=$((MA+1)); MI=0; PA=0 ;;
+            minor) MI=$((MI+1)); PA=0 ;;
+            patch) PA=$((PA+1)) ;;
+          esac
+          next="${MA}.${MI}.${PA}"
+          echo "Current: $current → Next: $next"
+
+          # Prepare names
+          safe_head=$(echo "$HEAD_REF" | tr '/' '-')
+          bump_branch="bot/bump-${next}-for-${safe_head}-${GITHUB_RUN_ID}"
+
+          # Create the bump branch from PR head
+          api --method POST "/repos/$REPO/git/refs" \
+            -f ref="refs/heads/$bump_branch" \
+            -f sha="$head_sha" >/dev/null
+
+          # Update manifest.json on the bump branch (Verified commit via Contents API)
+          updated_manifest=$(jq --arg v "$next" '.version=$v' <<<"$manifest_raw")
+          updated_manifest_b64=$(printf "%s" "$updated_manifest" | base64 -w 0)
+          api --method PUT "/repos/$REPO/contents/manifest.json" \
+            -f message="chore: bump manifest.json version to $next" \
+            -f content="$updated_manifest_b64" \
+            -f sha="$manifest_sha" \
+            -f branch="$bump_branch" >/dev/null
+
+          # If package.json exists and has version, bump it too on the bump branch
+          if api "/repos/$REPO/contents/package.json?ref=$HEAD_REF" >/tmp/pj.json 2>/dev/null; then
+            pj_sha=$(jq -r .sha </tmp/pj.json)
+            pj_raw=$(jq -r .content </tmp/pj.json | tr -d '\n' | base64 --decode)
+            pj_ver=$(jq -r .version <<<"$pj_raw")
+            if [[ -n "$pj_ver" && "$pj_ver" != "null" ]]; then
+              pj_updated=$(jq --arg v "$next" '.version=$v' <<<"$pj_raw")
+              pj_updated_b64=$(printf "%s" "$pj_updated" | base64 -w 0)
+              api --method PUT "/repos/$REPO/contents/package.json" \
+                -f message="chore: bump package.json version to $next" \
+                -f content="$pj_updated_b64" \
+                -f sha="$pj_sha" \
+                -f branch="$bump_branch" >/dev/null
+              echo "Bumped package.json too"
             fi
+          fi
 
-            local sha=$(echo "$json" | jq -r .sha)
-            local content=$(echo "$json" | jq -r .content | tr -d '\n' | base64 --decode)
-            local current=$(echo "$content" | jq -r .version)
+          # Open PR into the original PR branch
+          pr_body="Automated version bump for #$PR_NUMBER\n\nBumps manifest.json (and package.json if present) from **$current** → **$next**."
+          new_pr=$(api --method POST "/repos/$REPO/pulls" \
+            -f title="chore: bump version to $next for PR #$PR_NUMBER" \
+            -f head="$bump_branch" \
+            -f base="$HEAD_REF" \
+            -f body="$pr_body")
+          bump_number=$(jq -r .number <<<"$new_pr")
+          echo "bump_pr_number=$bump_number" >>"$GITHUB_OUTPUT"
+          echo "next=$next" >>"$GITHUB_OUTPUT"
 
-            if [[ "$current" == "null" || -z "$current" ]]; then
-              echo "skip $path (no .version field)"; return 0
-            fi
+          # Try to enable auto-merge (will no-op if disallowed)
+          gh pr merge "$bump_number" --auto --squash --delete-branch || true
 
-            IFS='.' read -r MA MI PA <<<"$current"
-            case "$bump" in
-              major) MA=$((MA+1)); MI=0; PA=0 ;;
-              minor) MI=$((MI+1)); PA=0 ;;
-              patch) PA=$((PA+1)) ;;
-            esac
-            local next="${MA}.${MI}.${PA}"
-
-            local updated=$(echo "$content" | jq --arg v "$next" '.version=$v')
-            local b64=$(echo "$updated" | base64 -w 0)
-
-            # Use GitHub Contents API so the commit is GitHub-signed (Verified)
-            gh api --method PUT -H "Accept: application/vnd.github+json" \
-              "/repos/$REPO/contents/$path" \
-              -f message="chore: bump $path version to $next" \
-              -f content="$b64" \
-              -f sha="$sha" \
-              -f branch="$BRANCH" >/dev/null
-
-            echo "Bumped $path → $next"
-            echo "next=$next" >> "$GITHUB_OUTPUT"
-          }
-
-          bump_file manifest.json
-          bump_file package.json || true
+          # Comment on the main PR with the link, in case manual action is needed
+          gh issue comment "$PR_NUMBER" \
+            --body="Opened version-bump PR #$bump_number (→ $next). Merge it to update this PR branch."
