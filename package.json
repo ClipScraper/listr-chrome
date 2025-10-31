@@ -1,6 +1,6 @@
 {
   "name": "listr",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "Get bookmarks and favorites from your favorite social media platforms.",
   "scripts": {
     "build": "webpack --mode production",

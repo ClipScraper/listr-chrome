@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "listr",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Displays a popup with bookmarks and more.",
   "icons": {
     "16": "assets/icons/icon-16.png",
@@ -12,8 +12,14 @@
   "action": {
     "default_popup": "popup.html"
   },
-  "permissions": ["tabs", "storage", "downloads"],
-  "host_permissions": ["<all_urls>"],
+  "permissions": [
+    "tabs",
+    "storage",
+    "downloads"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
   "content_scripts": [
     {
       "matches": [
@@ -22,7 +28,9 @@
         "https://*.youtube.com/*",
         "https://*.pinterest.com/*"
       ],
-      "js": ["dist/content.js"],
+      "js": [
+        "dist/content.js"
+      ],
       "run_at": "document_end"
     }
   ]
