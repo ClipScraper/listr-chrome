@@ -1,51 +1,66 @@
-name: Version Bump on PR
+name: bump-version
 
 on:
   pull_request:
-    types: [opened, synchronize]
+    types: [opened, synchronize, reopened, labeled]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
 
 jobs:
   bump-version:
-    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
+
+    env:
+      # Is this PR coming from a fork?
+      IS_FORK: ${{ github.event.pull_request.head.repo.full_name != github.repository }}
+      # Use PAT when it's a fork (needs write access to the PR branch), otherwise the default GITHUB_TOKEN.
+      WRITE_TOKEN: ${{ github.event.pull_request.head.repo.full_name != github.repository && secrets.REPO_WRITE_PAT || secrets.GITHUB_TOKEN }}
+      PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+      PR_HEAD_REF:  ${{ github.event.pull_request.head.ref }}
 
     steps:
-      - name: Checkout code
+      - name: Checkout PR branch
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.head_ref }}
-          token: ${{ secrets.GH_PAT }}
+          # When checking out from a fork, specify the source repo+branch explicitly.
+          repository: ${{ env.PR_HEAD_REPO }}
+          ref: ${{ env.PR_HEAD_REF }}
+          token: ${{ env.WRITE_TOKEN }}
+          fetch-depth: 0
 
-      - name: Setup Node.js
+      - name: Setup Node.js 20
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: 20
+          cache: npm
 
-      - name: Get PR commit messages
-        id: commits
+      - name: Install deps
+        run: npm ci
+
+      # --- Your logic to decide the bump level can go here.
+      # For simplicity we default to "patch"; replace with your own script if you have one.
+      - name: Bump version (package.json and package-lock.json)
         run: |
-          MESSAGES=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            "${{ github.event.pull_request.commits_url }}" | jq -r '.[].commit.message' | tr '\n' ' ')
-          echo "messages=$MESSAGES" >> "$GITHUB_OUTPUT"
+          npm version patch --no-git-tag-version
+          echo "Version after bump:"
+          node -p "require('./package.json').version"
 
-      - name: Bump version
-        id: bump
-        run: node scripts/version-bump.js
-        env:
-          BRANCH_NAME: ${{ github.head_ref }}
-          COMMIT_MESSAGES: ${{ steps.commits.outputs.messages }}
+      # If you also need to bump a Chrome manifest.json version, do it here.
+      # - name: Bump manifest.json version
+      #   run: node scripts/bump-manifest.js
 
-      - name: Commit and push version bump
+      - name: Commit and push change back to PR branch
         run: |
           git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add manifest.json package.json
-          if git diff --staged --quiet; then
-            echo "No version changes to commit."
-          else
-            git commit -m "build: Bump version to ${{ steps.bump.outputs.new_version }}" -m "[skip ci]"
-            git push
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
           fi
+          git commit -m "chore: bump version [skip ci]"
+          # Push back to the PR head branch (works for same-repo and forks when WRITE_TOKEN has rights)
+          git push "https://${{ env.WRITE_TOKEN }}@github.com/${{ env.PR_HEAD_REPO }}.git" "HEAD:${{ env.PR_HEAD_REF }}"
