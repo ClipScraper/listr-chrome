@@ -1,69 +1,250 @@
-name: Release
+name: Release — Chrome Web Store & GitHub
 
 on:
   pull_request:
-    types: [closed]
-    branches: [master]
+    # We react to PR updates (commits) and merges into master
+    types: [opened, synchronize, reopened, edited, closed]
+    branches: [ master ]
+  push:
+    branches: [ master ]
+  workflow_dispatch: {}
 
-permissions:
-  contents: write
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  release:
-    if: github.event.pull_request.merged == true
+  # ───────────────────────────────────────────────────────────────────────────────
+  # PR COMMIT with “[test-release]” in the latest commit message
+  # → GitHub Release + Chrome Web Store publish (while PR is still open)
+  # ───────────────────────────────────────────────────────────────────────────────
+  pr-test-release:
+    if: github.event_name == 'pull_request' && github.event.action != 'closed'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Use Node.js 20
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
         with:
-          node-version: 20
-          cache: npm
+          fetch-depth: 0
 
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build (production)
-        run: npm run build
-
-      - name: Make package script executable
-        run: chmod +x scripts/package.sh
-
-      - name: Package extension ZIP
-        id: pkg
+      - name: Determine if latest PR commit requests a [test-release]
+        id: chk
+        shell: bash
         run: |
-          ./scripts/package.sh production
-          echo "zip=$(ls -1 release/*.zip | head -n1)" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          LATEST_SHA="${{ github.event.pull_request.head.sha }}"
+          MSG="$(git log -1 --pretty=%B "$LATEST_SHA")"
+          echo "Latest PR commit message:"
+          echo "--------------------------------"
+          echo "$MSG"
+          echo "--------------------------------"
+          if echo "$MSG" | grep -qi '\[test-release\]'; then
+            echo "should=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should=false" >> "$GITHUB_OUTPUT"
+          fi
 
-      - name: Read version from manifest
-        id: ver
-        run: echo "version=$(jq -r .version manifest.json)" >> "$GITHUB_OUTPUT"
-
-      - name: Upload ZIP artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/setup-node@v4
+        if: steps.chk.outputs.should == 'true'
         with:
-          name: extension-zip
-          path: ${{ steps.pkg.outputs.zip }}
-          if-no-files-found: error
-          compression-level: 0
+          node-version: '20'
+
+      - name: Install deps
+        if: steps.chk.outputs.should == 'true'
+        run: npm ci || npm i
+
+      - name: Build
+        if: steps.chk.outputs.should == 'true'
+        run: npm run build --if-present
+
+      - name: Ensure jq
+        if: steps.chk.outputs.should == 'true'
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Compute release metadata
+        if: steps.chk.outputs.should == 'true'
+        id: meta
+        shell: bash
+        run: |
+          VERSION=$(jq -r '.version' manifest.json)
+          PR=${{ github.event.pull_request.number }}
+          SHORT_SHA=$(echo "${{ github.event.pull_request.head.sha }}" | cut -c1-7)
+          TAG="pr-${PR}-test-${SHORT_SHA}"
+          NAME="Test release for PR #${PR}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}"         >> "$GITHUB_OUTPUT"
+          echo "name=${NAME}"       >> "$GITHUB_OUTPUT"
+
+      - name: Zip extension
+        if: steps.chk.outputs.should == 'true'
+        shell: bash
+        run: |
+          mkdir -p release
+          # Common layouts; use second as fallback if the first has no matches
+          zip -qr9 release/extension.zip manifest.json *.html *.css *.js assets icons dist || \
+          zip -qr9 release/extension.zip manifest.json assets icons dist
+
+      - name: Create GitHub Release
+        if: steps.chk.outputs.should == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ steps.meta.outputs.name }}
+          body: |
+            Test release triggered from a PR commit containing “[test-release]”.
+            PR: #${{ github.event.pull_request.number }}
+            Actor: ${{ github.actor }}
+            Manifest version: ${{ steps.meta.outputs.version }}.
+          files: release/extension.zip
+
+      - name: Publish to Chrome Web Store
+        if: steps.chk.outputs.should == 'true'
+        uses: w9jds/chrome-extension-upload@v1.4.0
+        with:
+          refresh_token: ${{ secrets.CHROME_REFRESH_TOKEN }}
+          client_id: ${{ secrets.CHROME_CLIENT_ID }}
+          client_secret: ${{ secrets.CHROME_CLIENT_SECRET }}
+          app_id: ${{ secrets.CHROME_EXTENSION_ID }}
+          file: release/extension.zip
+          publish: true
+
+  # ───────────────────────────────────────────────────────────────────────────────
+  # PR MERGE → GH Release + Chrome Web Store publish
+  # ───────────────────────────────────────────────────────────────────────────────
+  pr-merge-release:
+    if: >
+      github.event_name == 'pull_request' &&
+      github.event.action == 'closed' &&
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.base.ref == 'master'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install deps
+        run: npm ci || npm i
+
+      - name: Build
+        run: npm run build --if-present
+
+      - name: Ensure jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Compute release metadata
+        id: meta
+        shell: bash
+        run: |
+          VERSION=$(jq -r '.version' manifest.json)
+          PR=${{ github.event.pull_request.number }}
+          SHORT_SHA=${GITHUB_SHA::7}
+          TAG="pr-${PR}-${SHORT_SHA}"
+          NAME="Auto release for PR #${PR}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}"         >> "$GITHUB_OUTPUT"
+          echo "name=${NAME}"       >> "$GITHUB_OUTPUT"
+
+      - name: Zip extension
+        shell: bash
+        run: |
+          mkdir -p release
+          zip -qr9 release/extension.zip manifest.json *.html *.css *.js assets icons dist || \
+          zip -qr9 release/extension.zip manifest.json assets icons dist
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ steps.ver.outputs.version }}-${{ github.sha }}
-          name: v${{ steps.ver.outputs.version }} (PR #${{ github.event.pull_request.number }})
-          generate_release_notes: true
-          files: ${{ steps.pkg.outputs.zip }}
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ steps.meta.outputs.name }}
+          body: |
+            Release generated from PR #${{ github.event.pull_request.number }} by ${{ github.actor }}.
+            Manifest version: ${{ steps.meta.outputs.version }}.
+          files: release/extension.zip
 
-      - name: Upload to Chrome Web Store (optional)
-        if: ${{ secrets.CHROME_CLIENT_ID != '' && secrets.CHROME_CLIENT_SECRET != '' && secrets.CHROME_REFRESH_TOKEN != '' && secrets.CHROME_EXTENSION_ID != '' }}
-        uses: Klemensas/chrome-extension-deploy@v2
+      - name: Publish to Chrome Web Store
+        uses: w9jds/chrome-extension-upload@v1.4.0
         with:
-          refresh-token: ${{ secrets.CHROME_REFRESH_TOKEN }}
-          client-id: ${{ secrets.CHROME_CLIENT_ID }}
-          client-secret: ${{ secrets.CHROME_CLIENT_SECRET }}
-          file-name: ${{ steps.pkg.outputs.zip }}
-          app-id: ${{ secrets.CHROME_EXTENSION_ID }}
+          refresh_token: ${{ secrets.CHROME_REFRESH_TOKEN }}
+          client_id: ${{ secrets.CHROME_CLIENT_ID }}
+          client_secret: ${{ secrets.CHROME_CLIENT_SECRET }}
+          app_id: ${{ secrets.CHROME_EXTENSION_ID }}
+          file: release/extension.zip
+          publish: true
+
+  # ───────────────────────────────────────────────────────────────────────────────
+  # PUSH with “[release]” in HEAD commit title → GH Release + Chrome publish
+  # (Direct pushes to master / manual releases)
+  # ───────────────────────────────────────────────────────────────────────────────
+  push-release-flag:
+    if: github.event_name == 'push' && contains(github.event.head_commit.message, '[release]')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install deps
+        run: npm ci || npm i
+
+      - name: Build
+        run: npm run build --if-present
+
+      - name: Ensure jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Compute release metadata from manifest
+        id: meta
+        shell: bash
+        run: |
+          VERSION=$(jq -r '.version' manifest.json)
+          TAG="v${VERSION}"
+          NAME="Release ${TAG}"
+          # If tag already exists, add a build suffix to avoid conflicts.
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            TAG="${TAG}+build.${{ github.run_number }}"
+            NAME="Release ${TAG}"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}"         >> "$GITHUB_OUTPUT"
+          echo "name=${NAME}"       >> "$GITHUB_OUTPUT"
+
+      - name: Zip extension
+        shell: bash
+        run: |
+          mkdir -p release
+          zip -qr9 release/extension.zip manifest.json *.html *.css *.js assets icons dist || \
+          zip -qr9 release/extension.zip manifest.json assets icons dist
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ steps.meta.outputs.name }}
+          body: |
+            Release triggered by a commit containing “[release]”. Actor: ${{ github.actor }}.
+            Manifest version: ${{ steps.meta.outputs.version }}.
+          files: release/extension.zip
+
+      - name: Publish to Chrome Web Store
+        uses: w9jds/chrome-extension-upload@v1.4.0
+        with:
+          refresh_token: ${{ secrets.CHROME_REFRESH_TOKEN }}
+          client_id: ${{ secrets.CHROME_CLIENT_ID }}
+          client_secret: ${{ secrets.CHROME_CLIENT_SECRET }}
+          app_id: ${{ secrets.CHROME_EXTENSION_ID }}
+          file: release/extension.zip
           publish: true
