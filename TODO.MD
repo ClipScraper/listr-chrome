@@ -6,7 +6,6 @@
 - youtube, need button scrape and button scrape+scroll
 - Pinterest - Separate Find more ideas
 
-
 - persistent renaming of rows
 
 Fix issue when google introduces ads link:
