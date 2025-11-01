@@ -17,13 +17,13 @@ env:
   PKG_DIR: .cws-package
 
 jobs:
-  # A) While PR is open: if any commit message contains [test-release],
-  #    create a GitHub pre-release and push to the Chrome Web Store.
+  # A) PR is open: if any commit message contains [test-release],
+  #    create a GitHub PRE-release and publish to a TEST listing (Trusted Testers).
   pr-test-release:
     if: github.event_name == 'pull_request' && github.event.action != 'closed'
     runs-on: ubuntu-latest
     steps:
-      - name: Check PR is from same repo (secrets are unavailable for forks)
+      - name: Check PR is from same repo (secrets unavailable for forks)
         id: same-repo
         run: |
           if [ "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]; then
@@ -44,9 +44,7 @@ jobs:
           script: |
             const {owner, repo} = context.repo;
             const number = context.payload.pull_request.number;
-            const resp = await github.rest.pulls.listCommits({
-              owner, repo, pull_number: number, per_page: 250
-            });
+            const resp = await github.rest.pulls.listCommits({ owner, repo, pull_number: number, per_page: 250 });
             const has = resp.data.some(c => /\[test-release\]/i.test(c.commit.message));
             core.info(`Found [test-release] in PR #${number} commits: ${has}`);
             core.setOutput('has_test', has ? 'true' : 'false');
@@ -54,6 +52,17 @@ jobs:
       - name: Stop early if not a test-release or from a fork
         if: steps.detect.outputs.has_test != 'true' || steps.same-repo.outputs.from_fork == 'true'
         run: echo "Skipping test release."
+
+      - name: Resolve TEST extension id
+        if: steps.detect.outputs.has_test == 'true' && steps.same-repo.outputs.from_fork != 'true'
+        id: extid
+        run: |
+          if [ -n "${{ vars.CWS_EXTENSION_ID_TEST }}" ]; then
+            echo "id=${{ vars.CWS_EXTENSION_ID_TEST }}" >> $GITHUB_OUTPUT
+          else
+            # fall back to production id if a TEST id wasn't provided
+            echo "id=${{ vars.CWS_EXTENSION_ID }}" >> $GITHUB_OUTPUT
+          fi
 
       - name: Setup Node
         if: steps.detect.outputs.has_test == 'true' && steps.same-repo.outputs.from_fork != 'true'
@@ -82,37 +91,25 @@ jobs:
           set -euo pipefail
           rm -rf "${{ env.PKG_DIR }}" "${{ env.ZIP_NAME }}"
           mkdir -p "${{ env.PKG_DIR }}"
-
-          # Prefer common build dirs; fall back to repo root
           OUT=""
           for d in dist build release; do
             if [ -d "$d" ]; then OUT="$d"; break; fi
           done
           if [ -z "$OUT" ]; then OUT="."; fi
-
           if [ "$OUT" = "." ]; then
-            # Copy a safe, conventional set from repo root
             for p in manifest.json icons assets _locales images styles css js lib src background content popup options; do
               [ -e "$p" ] && rsync -a --exclude 'node_modules' --exclude '.git' --exclude '.github' "$p" "${{ env.PKG_DIR }}/"
             done
           else
-            # Copy built output first
             rsync -a "$OUT"/ "${{ env.PKG_DIR }}/"
-            # If manifest.json isn't in the build dir, copy from repo root
             if [ ! -f "${{ env.PKG_DIR }}/manifest.json" ] && [ -f "manifest.json" ]; then
               cp manifest.json "${{ env.PKG_DIR }}/"
             fi
-            # Bring over common asset dirs if missing
             for d in icons assets _locales images; do
-              if [ ! -e "${{ env.PKG_DIR }}/$d" ] && [ -e "$d" ]; then
-                rsync -a "$d" "${{ env.PKG_DIR }}/"
-              fi
+              if [ ! -e "${{ env.PKG_DIR }}/$d" ] && [ -e "$d" ]; then rsync -a "$d" "${{ env.PKG_DIR }}/"; fi
             done
           fi
-
-          # Hard fail if manifest still missing
           test -f "${{ env.PKG_DIR }}/manifest.json" || { echo "::error::manifest.json not found at ZIP root"; ls -la "${{ env.PKG_DIR }}"; exit 1; }
-
           (cd "${{ env.PKG_DIR }}" && zip -qr "../${{ env.ZIP_NAME }}" .)
           ls -lh "${{ env.ZIP_NAME }}"
 
@@ -126,17 +123,19 @@ jobs:
           generate_release_notes: true
           files: ${{ env.ZIP_NAME }}
 
-      - name: Publish to Chrome Web Store (TEST)
+      - name: Publish to Chrome Web Store (TEST — Trusted Testers)
         if: steps.detect.outputs.has_test == 'true' && steps.same-repo.outputs.from_fork != 'true'
         uses: browser-actions/release-chrome-extension@v0
+        continue-on-error: true   # don't fail the whole job if the listing is locked
         with:
-          extension-id: ${{ vars.CWS_EXTENSION_ID }}
+          extension-id: ${{ steps.extid.outputs.id }}
           extension-path: ${{ env.ZIP_NAME }}
           oauth-client-id: ${{ vars.CWS_CLIENT_ID }}
           oauth-client-secret: ${{ secrets.CWS_CLIENT_SECRET }}
           oauth-refresh-token: ${{ secrets.CWS_REFRESH_TOKEN }}
+          publish-target: trustedTesters
 
-  # B) When PR is merged into master: always release to GitHub and CWS.
+  # B) When PR is merged into master: always release to GitHub and CWS (production).
   pr-merge-release:
     if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true
     runs-on: ubuntu-latest
@@ -144,11 +143,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-
       - name: Install & Build
         run: |
           if [ -f pnpm-lock.yaml ]; then
@@ -162,7 +159,6 @@ jobs:
             npm ci
             npm run build || true
           fi
-
       - name: Package Chrome extension (ensure manifest at ZIP root)
         run: |
           set -euo pipefail
@@ -172,8 +168,8 @@ jobs:
           for d in dist build release; do
             if [ -d "$d" ]; then OUT="$d"; break; fi
           done
-          if [ -z "$OUT" ]; then OUT="."; fi
-          if [ "$OUT" = "." ] ; then
+          [ -z "$OUT" ] && OUT="."
+          if [ "$OUT" = "." ]; then
             for p in manifest.json icons assets _locales images styles css js lib src background content popup options; do
               [ -e "$p" ] && rsync -a --exclude 'node_modules' --exclude '.git' --exclude '.github' "$p" "${{ env.PKG_DIR }}/"
             done
@@ -181,12 +177,11 @@ jobs:
             rsync -a "$OUT"/ "${{ env.PKG_DIR }}/"
             [ ! -f "${{ env.PKG_DIR }}/manifest.json" ] && [ -f "manifest.json" ] && cp manifest.json "${{ env.PKG_DIR }}/"
             for d in icons assets _locales images; do
-              if [ ! -e "${{ env.PKG_DIR }}/$d" ] && [ -e "$d" ]; then rsync -a "$d" "${{ env.PKG_DIR }}/"; fi
+              [ ! -e "${{ env.PKG_DIR }}/$d" ] && [ -e "$d" ] && rsync -a "$d" "${{ env.PKG_DIR }}/"
             done
           fi
           test -f "${{ env.PKG_DIR }}/manifest.json" || { echo "::error::manifest.json not found"; exit 1; }
           (cd "${{ env.PKG_DIR }}" && zip -qr "../${{ env.ZIP_NAME }}" .)
-
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
@@ -194,8 +189,7 @@ jobs:
           name: Auto release for PR #${{ github.event.pull_request.number }}
           generate_release_notes: true
           files: ${{ env.ZIP_NAME }}
-
-      - name: Publish to Chrome Web Store
+      - name: Publish to Chrome Web Store (production)
         uses: browser-actions/release-chrome-extension@v0
         with:
           extension-id: ${{ vars.CWS_EXTENSION_ID }}
@@ -203,9 +197,10 @@ jobs:
           oauth-client-id: ${{ vars.CWS_CLIENT_ID }}
           oauth-client-secret: ${{ secrets.CWS_CLIENT_SECRET }}
           oauth-refresh-token: ${{ secrets.CWS_REFRESH_TOKEN }}
+          publish-target: default
 
-  # C) Any push to master where ANY commit message contains [release]:
-  #    release to GitHub and CWS.
+  # C) Any push to master with a commit message containing [release]:
+  #    release to GitHub and CWS (production).
   push-release-flag:
     if: github.event_name == 'push' && contains(toJson(github.event.commits), '[release]')
     runs-on: ubuntu-latest
@@ -213,11 +208,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-
       - name: Install & Build
         run: |
           if [ -f pnpm-lock.yaml ]; then
@@ -231,7 +224,6 @@ jobs:
             npm ci
             npm run build || true
           fi
-
       - name: Package Chrome extension (ensure manifest at ZIP root)
         run: |
           set -euo pipefail
@@ -241,8 +233,8 @@ jobs:
           for d in dist build release; do
             if [ -d "$d" ]; then OUT="$d"; break; fi
           done
-          if [ -z "$OUT" ]; then OUT="."; fi
-          if [ "$OUT" = "." ] ; then
+          [ -z "$OUT" ] && OUT="."
+          if [ "$OUT" = "." ]; then
             for p in manifest.json icons assets _locales images styles css js lib src background content popup options; do
               [ -e "$p" ] && rsync -a --exclude 'node_modules' --exclude '.git' --exclude '.github' "$p" "${{ env.PKG_DIR }}/"
             done
@@ -250,12 +242,11 @@ jobs:
             rsync -a "$OUT"/ "${{ env.PKG_DIR }}/"
             [ ! -f "${{ env.PKG_DIR }}/manifest.json" ] && [ -f "manifest.json" ] && cp manifest.json "${{ env.PKG_DIR }}/"
             for d in icons assets _locales images; do
-              if [ ! -e "${{ env.PKG_DIR }}/$d" ] && [ -e "$d" ]; then rsync -a "$d" "${{ env.PKG_DIR }}/"; fi
+              [ ! -e "${{ env.PKG_DIR }}/$d" ] && [ -e "$d" ] && rsync -a "$d" "${{ env.PKG_DIR }}/"
             done
           fi
           test -f "${{ env.PKG_DIR }}/manifest.json" || { echo "::error::manifest.json not found"; exit 1; }
           (cd "${{ env.PKG_DIR }}" && zip -qr "../${{ env.ZIP_NAME }}" .)
-
       - name: Create GitHub release (flagged)
         uses: softprops/action-gh-release@v2
         with:
@@ -263,8 +254,7 @@ jobs:
           name: Flagged [release] — run ${{ github.run_number }}
           generate_release_notes: true
           files: ${{ env.ZIP_NAME }}
-
-      - name: Publish to Chrome Web Store (flagged)
+      - name: Publish to Chrome Web Store (production)
         uses: browser-actions/release-chrome-extension@v0
         with:
           extension-id: ${{ vars.CWS_EXTENSION_ID }}
@@ -272,3 +262,4 @@ jobs:
           oauth-client-id: ${{ vars.CWS_CLIENT_ID }}
           oauth-client-secret: ${{ secrets.CWS_CLIENT_SECRET }}
           oauth-refresh-token: ${{ secrets.CWS_REFRESH_TOKEN }}
+          publish-target: default
