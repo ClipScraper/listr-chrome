@@ -179,12 +179,14 @@ function determinePinterestAnchorCategory(anchor: HTMLElement, boundary: number 
 }
 
 /** Pinterest pin scanning with board vs "more ideas" separation */
-function scanAndCollectPinterestPins(logEach: boolean = false): string[] {
-  if (!/pinterest\./.test(location.hostname)) return [];
-  if (pinterestMode === 'inactive') return [];
+function scanAndCollectPinterestPins(logEach: boolean = false): { links: string[]; boardExhausted: boolean } {
+  if (!/pinterest\./.test(location.hostname)) return { links: [], boardExhausted: false };
+  if (pinterestMode === 'inactive') return { links: [], boardExhausted: false };
 
   const boundary = findMoreIdeasBoundary();
   const newly: string[] = [];
+  let foundBoardPin = false;
+  let sawMoreIdeas = false;
 
   document.querySelectorAll<HTMLAnchorElement>('a[href]').forEach(a => {
     const href = a.getAttribute('href') || '';
@@ -212,10 +214,21 @@ function scanAndCollectPinterestPins(logEach: boolean = false): string[] {
       if (!isVisible) return;
 
       const category = determinePinterestAnchorCategory(a, boundary);
-      if (pinterestMode === 'board' && category === 'moreIdeas') return;
-      if (pinterestMode === 'moreIdeas' && category === 'board') return;
+      let targetSet: Set<string>;
+      if (category === 'moreIdeas') {
+        sawMoreIdeas = true;
+        if (pinterestMode === 'board') {
+          return;
+        }
+        targetSet = collectedPinterestMoreIdeasLinks;
+      } else {
+        foundBoardPin = true;
+        if (pinterestMode === 'moreIdeas') {
+          return;
+        }
+        targetSet = collectedPinterestBoardLinks;
+      }
 
-      const targetSet = category === 'moreIdeas' ? collectedPinterestMoreIdeasLinks : collectedPinterestBoardLinks;
       if (!targetSet.has(finalUrl)) {
         targetSet.add(finalUrl);
         newly.push(finalUrl);
@@ -226,7 +239,8 @@ function scanAndCollectPinterestPins(logEach: boolean = false): string[] {
     }
   });
 
-  return newly;
+  const boardExhausted = pinterestMode === 'board' && !foundBoardPin && sawMoreIdeas;
+  return { links: newly, boardExhausted };
 }
 
 /**
@@ -439,13 +453,23 @@ function doScrollStep() {
   }
 
   // NEW: Incremental Pinterest pin discovery
-  const newlyPins = scanAndCollectPinterestPins(true);
+  const pinterestScan = scanAndCollectPinterestPins(true);
+  const newlyPins = pinterestScan.links;
   if (newlyPins.length > 0) {
     const modeSnapshot = pinterestMode;
     try {
       browser.runtime.sendMessage({ type: 'pinterestNewLinks', links: newlyPins, mode: modeSnapshot })
         .catch(() => {});
     } catch {}
+  } else if (pinterestMode === 'board' && pinterestScan.boardExhausted) {
+    console.log('Pinterest board pins exhausted; stopping scroll.');
+    stopScrolling();
+    pinterestMode = 'inactive';
+    try {
+      browser.runtime.sendMessage({ type: 'scrollComplete', reason: 'pinterestBoardComplete' })
+        .catch(() => {});
+    } catch {}
+    return;
   }
 
   if (currentHeight > lastHeight) {
@@ -648,8 +672,8 @@ browser.runtime.onMessage.addListener(async (message: any, _sender: any) => {
           break;
         }
         case 'scanPinterestOnce': {
-          const links = scanAndCollectPinterestPins(true);
-          resolve({ links, mode: pinterestMode });
+          const { links, boardExhausted } = scanAndCollectPinterestPins(true);
+          resolve({ links, mode: pinterestMode, boardExhausted });
           break;
         }
 

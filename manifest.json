@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "listr",
-  "version": "1.0.3",
+  "version": "1.1.0",
   "description": "Displays a popup with bookmarks and more.",
   "icons": {
     "16": "assets/icons/icon-16.png",
