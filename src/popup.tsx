@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { createRoot } from 'react-dom/client';
-import { Sun, Moon, Download, Ban, ListTodo, Play, Pause, Trash2, Plus, Settings } from 'lucide-react';
+import { Sun, Moon, Download, Ban, ListTodo, Play, Pause, Trash2, Plus, Settings, Lightbulb } from 'lucide-react';
 import browser from 'webextension-polyfill';
 import { useActiveTab } from './hooks/useActiveTab';
 import { useScrolling } from './hooks/useScrolling';
@@ -93,7 +93,7 @@ const Popup: React.FC = () => {
   const tiktokPollIntervalRef = React.useRef<number | null>(null);
 
   /** NEW: Pinterest active collection ref */
-  const pinterestActiveRef = React.useRef<{ name: string; type: 'bookmarks' | 'profile'; handle: string } | null>(null);
+  const pinterestActiveRef = React.useRef<{ name: string; type: 'bookmarks' | 'profile'; handle: string; mode: 'board' | 'moreIdeas' } | null>(null);
 
   const isTikTokDomain = activeUrl.startsWith("https://www.tiktok.com");
   const isInstagramDomain = activeUrl.startsWith("https://www.instagram.com");
@@ -109,6 +109,29 @@ const Popup: React.FC = () => {
       return false;
     }
   }, [activeUrl, isPinterestDomain]);
+
+  const pinterestBoardInfo = React.useMemo(() => {
+    if (!isPinterestDomain) return null;
+    try {
+      const u = new URL(activeUrl);
+      const segments = u.pathname.split('/').filter(Boolean);
+      if (segments.length >= 2) {
+        const [first, second] = segments;
+        if (['pin', 'search', 'ideas', 'explore', 'topics'].includes(first)) {
+          return null;
+        }
+        return {
+          user: decodeURIComponent(first),
+          board: decodeURIComponent(second),
+        };
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }, [activeUrl, isPinterestDomain]);
+
+  const isPinterestBoardPage = pinterestBoardInfo !== null;
 
   const isYouTubeVideoPage = isYouTubeDomain && activeUrl.includes('/watch?v=');
   const isYouTubePlaylistPage = isYouTubeDomain && activeUrl.includes('/playlist?list=');
@@ -372,9 +395,21 @@ const Popup: React.FC = () => {
         if (links.length === 0) return;
 
         const active = pinterestActiveRef.current;
-        if (active) {
+        const mode: 'board' | 'moreIdeas' = message.mode === 'moreIdeas' ? 'moreIdeas' : 'board';
+        if (active && active.mode === mode) {
           ensureCollection('pinterest', active.name, { type: active.type, handle: active.handle });
           addBookmarksToCollection('pinterest', active.name, links);
+          return;
+        }
+        if (mode === 'moreIdeas') {
+          const fallbackName = pinterestBoardInfo
+            ? `${pinterestBoardInfo.user}_${pinterestBoardInfo.board}_more_ideas`
+            : 'pinterest_more_ideas';
+          const fallbackHandle = pinterestBoardInfo
+            ? `${pinterestBoardInfo.user} - ${pinterestBoardInfo.board} (more ideas)`
+            : 'Pinterest (more ideas)';
+          ensureCollection('pinterest', fallbackName, { type: 'profile', handle: fallbackHandle });
+          addBookmarksToCollection('pinterest', fallbackName, links);
           return;
         }
         ensureCollection('pinterest', 'pinterest_page', { type: 'profile', handle: 'Pinterest' });
@@ -383,7 +418,7 @@ const Popup: React.FC = () => {
     };
     browser.runtime.onMessage.addListener(handler);
     return () => browser.runtime.onMessage.removeListener(handler);
-  }, [activeUrl, isPinterestDomain, isTikTokDomain, isInstagramDomain, isYouTubeDomain, isYouTubePlaylistPage]);
+  }, [activeUrl, isPinterestDomain, isTikTokDomain, isInstagramDomain, isYouTubeDomain, isYouTubePlaylistPage, pinterestBoardInfo]);
 
   const handleBookmarkAll = () => {
     browser.tabs.query({ active: true, currentWindow: true })
@@ -415,18 +450,23 @@ const Popup: React.FC = () => {
     });
   }, [activeUrl, ensureCollection, addBookmarksToCollection, pingContentScript, scrollStatus, startScrolling, scrollWaitTime]);
 
-  /** Pinterest list button handler */
-  // FIXED: ensure /search/pins is handled BEFORE the generic 2-segment matcher
-  // Pinterest: list pins on current page (search-first routing + strict TS-safe)
-  const handleCollectPinterestPins = React.useCallback(async () => {
+  /** Pinterest list button handlers */
+  const triggerPinterestCollection = React.useCallback(async (mode: 'board' | 'moreIdeas') => {
     try {
+      const tabs = await browser.tabs.query({ active: true, currentWindow: true });
+      const tabId = tabs[0]?.id ?? null;
       const u = new URL(activeUrl);
       let collectionName = 'pinterest_page';
       let handle = 'Pinterest';
       let type: 'bookmarks' | 'profile' = 'profile';
+      let isBoardContext = pinterestBoardInfo != null;
 
       // 1) /search/pins?q=... (handle this BEFORE the generic 2-segment matcher)
       if (u.pathname.startsWith('/search/pins')) {
+        if (mode === 'moreIdeas') {
+          console.warn('Pinterest "Find more ideas" collection is only available on board pages.');
+          return;
+        }
         const q = (u.searchParams.get('q') || '').trim();
         if (q) {
           collectionName = `search_${q}`;
@@ -439,32 +479,29 @@ const Popup: React.FC = () => {
 
       // 2) Single pin
       } else if (/^\/pin\/(\d+)/.test(u.pathname)) {
+        if (mode === 'moreIdeas') {
+          console.warn('Pinterest "Find more ideas" collection is only available on board pages.');
+          return;
+        }
         const id = (u.pathname.match(/^\/pin\/(\d+)/) || [, ''])[1];
         collectionName = `pin_${id}`;
         handle = `Pin ${id}`;
         type = 'bookmarks';
 
       // 3) Board: /{user}/{board} (runs after search so it won't swallow it)
-      } else if (/^\/([^/]+)\/([^/]+)\/?/.test(u.pathname)) {
-        const m = u.pathname.match(/^\/([^/]+)\/([^/]+)\/?/)!;
-        const user = decodeURIComponent(m[1]);
-        const board = decodeURIComponent(m[2]);
+      } else if (pinterestBoardInfo) {
+        const { user, board } = pinterestBoardInfo;
         collectionName = `${user}_${board}`;
         handle = `${user} - ${board}`;
         type = 'profile';
+        isBoardContext = true;
 
       // 4) Home: include selected section if available
       } else if (u.pathname === '/') {
         try {
-          const tabs = await browser.tabs.query({ active: true, currentWindow: true });
-          const tabId = tabs[0]?.id;
-
-          // TS-safe: force `any` so strict mode won't complain about `.section`
           const res: any = tabId
-            ? await (browser.tabs.sendMessage(tabId, { action: 'pinterestGetSection' }) as any)
-                .catch(() => null)
+            ? await browser.tabs.sendMessage(tabId, { action: 'pinterestGetSection' }).catch(() => null)
             : null;
-
           const section = (res && typeof res.section === 'string') ? res.section.trim() : '';
           if (section) {
             collectionName = `home_${section}`;
@@ -477,27 +514,57 @@ const Popup: React.FC = () => {
           collectionName = 'home';
           handle = 'Home';
         }
+      } else {
+        if (mode === 'moreIdeas') {
+          console.warn('Pinterest "Find more ideas" collection is only available on board pages.');
+          return;
+        }
+      }
+
+      if (mode === 'moreIdeas') {
+        if (!isBoardContext || !pinterestBoardInfo) {
+          console.warn('Pinterest "Find more ideas" collection requires a board context.');
+          return;
+        }
+        collectionName = `${collectionName}_more_ideas`;
+        handle = `${handle} (more ideas)`;
       }
 
       // Ensure meta row and start incremental collection
-      pinterestActiveRef.current = { name: collectionName, type, handle };
+      pinterestActiveRef.current = { name: collectionName, type, handle, mode };
       ensureCollection('pinterest', collectionName, { type, handle });
 
-      const tabs = await browser.tabs.query({ active: true, currentWindow: true });
-      const tabId = tabs[0]?.id;
       if (tabId) {
-        await browser.tabs.sendMessage(tabId, { action: 'resetPinterestState' }).catch(() => null);
+        await browser.tabs.sendMessage(tabId, { action: 'setPinterestMode', mode }).catch(() => null);
+        await browser.tabs.sendMessage(tabId, { action: 'resetPinterestState', scope: 'all' }).catch(() => null);
       }
       startScrolling(scrollWaitTime);
     } catch (e) {
       console.error('Error starting Pinterest collection:', e);
     }
-  }, [activeUrl, ensureCollection, startScrolling, scrollWaitTime]);
+  }, [activeUrl, ensureCollection, pinterestBoardInfo, startScrolling, scrollWaitTime]);
+
+  const handleCollectPinterestPins = React.useCallback(() => {
+    void triggerPinterestCollection('board');
+  }, [triggerPinterestCollection]);
+
+  const handleCollectPinterestMoreIdeas = React.useCallback(() => {
+    void triggerPinterestCollection('moreIdeas');
+  }, [triggerPinterestCollection]);
 
   const handleCancelListing = () => {
     cancelScrolling();
     tiktokActiveCollectionRef.current = null;
     pinterestActiveRef.current = null;
+    if (isPinterestDomain) {
+      browser.tabs.query({ active: true, currentWindow: true })
+        .then(tabs => {
+          const tabId = tabs[0]?.id;
+          if (tabId == null) return;
+          return browser.tabs.sendMessage(tabId, { action: 'setPinterestMode', mode: 'inactive' }).catch(() => null);
+        })
+        .catch(() => {});
+    }
     if (tiktokPollIntervalRef.current) {
       window.clearInterval(tiktokPollIntervalRef.current);
       tiktokPollIntervalRef.current = null;
@@ -817,6 +884,16 @@ const Popup: React.FC = () => {
                 {scrollStatus === 'idle' && isPinterestDomain && (
                   <button onClick={handleCollectPinterestPins} className="theme-toggle-button" title="List pins on this page">
                     <ListTodo size={20} />
+                  </button>
+                )}
+                {scrollStatus === 'idle' && isPinterestBoardPage && (
+                  <button
+                    onClick={handleCollectPinterestMoreIdeas}
+                    className="theme-toggle-button"
+                    style={{ marginLeft: 'auto' }}
+                    title='List pins from "Find more ideas"'
+                  >
+                    <Lightbulb size={20} />
                   </button>
                 )}
                 {scrollStatus === 'idle' && isYouTubeDomain && !isYouTubeVideoPage && !isYouTubeChannelPage && !isYouTubePlaylistPage && (
