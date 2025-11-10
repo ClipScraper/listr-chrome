@@ -37,8 +37,11 @@ const collectedInstaLinks = new Set<string>();
 const collectedInstaItems: InstagramItem[] = [];
 const collectedTiktokFavLinks = new Set<string>();
 
-/** NEW: Pinterest incremental set */
-const collectedPinterestLinks = new Set<string>();
+/** Pinterest incremental sets and state */
+type PinterestMode = 'inactive' | 'board' | 'moreIdeas';
+let pinterestMode: PinterestMode = 'inactive';
+const collectedPinterestBoardLinks = new Set<string>();
+const collectedPinterestMoreIdeasLinks = new Set<string>();
 
 function toAbsoluteInstagramUrl(pathOrUrl: string): string | null {
   try {
@@ -120,17 +123,73 @@ function scanAndCollectYouTubeVideos(logEach: boolean = false): string[] {
   return newly;
 }
 
-/** NEW: Pinterest pin scanning */
+/** Helpers to distinguish board pins vs "Find more ideas" suggestions */
+function findMoreIdeasBoundary(): number | null {
+  const boundarySelectors = [
+    '[data-test-id="board-more-ideas"]',
+    '[data-test-id="board-more-ideas-feed"]',
+    '[data-test-id="board-more-ideas-section"]',
+    '[data-test-id="more-ideas-board-section"]',
+    '[data-test-id="more-ideas-feed"]',
+    '[data-test-id="moreIdeas"]',
+    '[data-test-id="BoardPageMoreIdeasFeed"]',
+  ];
+
+  for (const sel of boundarySelectors) {
+    const el = document.querySelector<HTMLElement>(sel);
+    if (el) {
+      const rect = el.getBoundingClientRect();
+      return rect.top + window.scrollY;
+    }
+  }
+
+  const textMatch = Array.from(document.querySelectorAll<HTMLElement>('h1,h2,h3,div,span'))
+    .find(el => (el.textContent || '').trim().toLowerCase() === 'find more ideas');
+  if (textMatch) {
+    const rect = textMatch.getBoundingClientRect();
+    return rect.bottom + window.scrollY;
+  }
+
+  return null;
+}
+
+function determinePinterestAnchorCategory(anchor: HTMLElement, boundary: number | null): 'board' | 'moreIdeas' {
+  let current: HTMLElement | null = anchor;
+  while (current) {
+    const dataTestId = current.getAttribute && current.getAttribute('data-test-id');
+    if (dataTestId && /more[-_\s]?ideas/i.test(dataTestId)) {
+      return 'moreIdeas';
+    }
+    const className = typeof current.className === 'string' ? current.className : '';
+    if (className && /more[-_\s]?ideas/i.test(className)) {
+      return 'moreIdeas';
+    }
+    current = current.parentElement;
+  }
+
+  if (boundary != null) {
+    const rect = anchor.getBoundingClientRect();
+    const centerY = rect.top + rect.height / 2 + window.scrollY;
+    if (centerY >= boundary) {
+      return 'moreIdeas';
+    }
+  }
+
+  return 'board';
+}
+
+/** Pinterest pin scanning with board vs "more ideas" separation */
 function scanAndCollectPinterestPins(logEach: boolean = false): string[] {
   if (!/pinterest\./.test(location.hostname)) return [];
+  if (pinterestMode === 'inactive') return [];
+
+  const boundary = findMoreIdeasBoundary();
   const newly: string[] = [];
 
-  const anchors = document.querySelectorAll<HTMLAnchorElement>('a[href]');
-  anchors.forEach(a => {
+  document.querySelectorAll<HTMLAnchorElement>('a[href]').forEach(a => {
     const href = a.getAttribute('href') || '';
     if (!href) return;
 
-    // Accept absolute or site-relative links, normalize to absolute
     let url: string;
     try {
       url = new URL(href, location.origin).toString();
@@ -138,7 +197,6 @@ function scanAndCollectPinterestPins(logEach: boolean = false): string[] {
       return;
     }
 
-    // Filter strictly to /pin/{id}/ style URLs and strip query/hash
     const m = url.match(/^https:\/\/(?:[^/]+\.)?pinterest\.com\/pin\/(\d+)\/?/i);
     if (!m) return;
 
@@ -146,19 +204,22 @@ function scanAndCollectPinterestPins(logEach: boolean = false): string[] {
       const u = new URL(url);
       u.hash = '';
       u.search = '';
-      // Ensure a trailing slash for consistency
-      const path = u.pathname.endsWith('/') ? u.pathname : u.pathname + '/';
+      const path = u.pathname.endsWith('/') ? u.pathname : `${u.pathname}/`;
       u.pathname = path;
       const finalUrl = u.toString();
 
-      // Only count visible anchors to avoid hidden templates
       const isVisible = !!(a.offsetParent || (a as any).offsetWidth || (a as any).offsetHeight);
       if (!isVisible) return;
 
-      if (!collectedPinterestLinks.has(finalUrl)) {
-        collectedPinterestLinks.add(finalUrl);
+      const category = determinePinterestAnchorCategory(a, boundary);
+      if (pinterestMode === 'board' && category === 'moreIdeas') return;
+      if (pinterestMode === 'moreIdeas' && category === 'board') return;
+
+      const targetSet = category === 'moreIdeas' ? collectedPinterestMoreIdeasLinks : collectedPinterestBoardLinks;
+      if (!targetSet.has(finalUrl)) {
+        targetSet.add(finalUrl);
         newly.push(finalUrl);
-        if (logEach) console.log('Added Pinterest pin:', finalUrl);
+        if (logEach) console.log(`Added Pinterest pin (${category}):`, finalUrl);
       }
     } catch {
       /* ignore */
@@ -380,8 +441,9 @@ function doScrollStep() {
   // NEW: Incremental Pinterest pin discovery
   const newlyPins = scanAndCollectPinterestPins(true);
   if (newlyPins.length > 0) {
+    const modeSnapshot = pinterestMode;
     try {
-      browser.runtime.sendMessage({ type: 'pinterestNewLinks', links: newlyPins })
+      browser.runtime.sendMessage({ type: 'pinterestNewLinks', links: newlyPins, mode: modeSnapshot })
         .catch(() => {});
     } catch {}
   }
@@ -394,6 +456,9 @@ function doScrollStep() {
     if (Date.now() - lastChangeTime > 2000) { // Reduced from 20000 to 2000 (2 seconds)
       console.log("Scrolling stopped. No new content loaded in 2 seconds.");
       stopScrolling();
+      if (pinterestMode !== 'inactive') {
+        pinterestMode = 'inactive';
+      }
       browser.runtime.sendMessage({ type: 'scrollComplete' })
         .catch(() => {});
       return;
@@ -544,19 +609,47 @@ browser.runtime.onMessage.addListener(async (message: any, _sender: any) => {
           break;
         }
 
-        /** NEW: Pinterest helpers */
+        /** Pinterest helpers */
         case 'collectPinterestLinks': {
-          const links = Array.from(collectedPinterestLinks);
-          resolve({ links });
+          const scope = message?.scope;
+          if (scope === 'board') {
+            resolve({ links: Array.from(collectedPinterestBoardLinks) });
+            break;
+          }
+          if (scope === 'moreIdeas') {
+            resolve({ links: Array.from(collectedPinterestMoreIdeasLinks) });
+            break;
+          }
+          const combined = new Set<string>();
+          collectedPinterestBoardLinks.forEach(link => combined.add(link));
+          collectedPinterestMoreIdeasLinks.forEach(link => combined.add(link));
+          resolve({ links: Array.from(combined) });
           break;
         }
-        case 'resetPinterestState':
-          collectedPinterestLinks.clear();
+        case 'resetPinterestState': {
+          const scope = message?.scope;
+          if (!scope || scope === 'board' || scope === 'all') {
+            collectedPinterestBoardLinks.clear();
+          }
+          if (!scope || scope === 'moreIdeas' || scope === 'all') {
+            collectedPinterestMoreIdeasLinks.clear();
+          }
           resolve({ status: 'cleared' });
           break;
+        }
+        case 'setPinterestMode': {
+          const nextMode = message?.mode;
+          if (nextMode === 'board' || nextMode === 'moreIdeas') {
+            pinterestMode = nextMode;
+          } else {
+            pinterestMode = 'inactive';
+          }
+          resolve({ status: 'ok', mode: pinterestMode });
+          break;
+        }
         case 'scanPinterestOnce': {
           const links = scanAndCollectPinterestPins(true);
-          resolve({ links });
+          resolve({ links, mode: pinterestMode });
           break;
         }
 
