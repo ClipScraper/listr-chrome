@@ -17,8 +17,7 @@ env:
   PKG_DIR: .cws-package
 
 jobs:
-  # A) PR is open: if any commit message contains [test-release],
-  #    create a GitHub PRE-release and publish to a TEST listing (Trusted Testers).
+  # A) PR is open: if any commit message contains [test-release], create a GitHub PRE-release and publish to a TEST listing (Trusted Testers).
   pr-test-release:
     if: github.event_name == 'pull_request' && github.event.action != 'closed'
     runs-on: ubuntu-latest
