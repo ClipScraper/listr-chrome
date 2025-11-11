@@ -137,7 +137,13 @@ jobs:
 
   # B) When PR is merged into master: always release to GitHub and CWS (production).
   pr-merge-release:
-    if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true
+    if: >
+      github.event_name == 'pull_request' &&
+      github.event.action == 'closed' &&
+      github.event.pull_request.merged == true &&
+      !contains(toJson(github.event.pull_request.labels), '"no-release"') &&
+      !contains(github.event.pull_request.title, '[no-release]') &&
+      !(github.event.pull_request.body && contains(github.event.pull_request.body, '[no-release]'))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
