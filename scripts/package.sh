@@ -28,35 +28,47 @@ if [ ! -d "$DIST" ]; then
   npm run build
 fi
 
-echo "Preparing package content…"
-cp -f "$ROOT/manifest.json" "$DIST/"
+STAGING_DIR="$(mktemp -d "$RELEASE_DIR/staging.XXXXXX")"
+cleanup() {
+  rm -rf "$STAGING_DIR"
+}
+trap cleanup EXIT
 
-if [ -d "$ROOT/icons" ]; then
-  echo "Copying icons/ → dist/icons/"
-  mkdir -p "$DIST/icons"
-  cp -R "$ROOT/icons/." "$DIST/icons/"
-else
-  echo "No icons/ directory; skipping."
-fi
+echo "Staging files in $STAGING_DIR"
 
-if [ -d "$ROOT/assets" ]; then
-  echo "Copying assets/ → dist/assets/"
-  mkdir -p "$DIST/assets"
-  cp -R "$ROOT/assets/." "$DIST/assets/"
-fi
-
-if [ -d "$ROOT/public" ]; then
-  echo "Copying public/ → dist/"
-  cp -R "$ROOT/public/." "$DIST/"
-fi
+echo "• Copying manifest.json"
+cp "$ROOT/manifest.json" "$STAGING_DIR/manifest.json"
 
 for f in popup.html options.html background.html; do
   if [ -f "$ROOT/$f" ]; then
-    cp -f "$ROOT/$f" "$DIST/"
+    echo "• Copying $f"
+    cp "$ROOT/$f" "$STAGING_DIR/$f"
   fi
 done
 
+if [ -d "$ROOT/assets" ]; then
+  echo "• Copying assets/"
+  mkdir -p "$STAGING_DIR/assets"
+  cp -R "$ROOT/assets/." "$STAGING_DIR/assets/"
+fi
+
+if [ -d "$ROOT/icons" ]; then
+  echo "• Copying icons/"
+  mkdir -p "$STAGING_DIR/icons"
+  cp -R "$ROOT/icons/." "$STAGING_DIR/icons/"
+fi
+
+if [ -d "$ROOT/public" ]; then
+  echo "• Copying public/"
+  mkdir -p "$STAGING_DIR/public"
+  cp -R "$ROOT/public/." "$STAGING_DIR/public/"
+fi
+
+echo "• Copying compiled dist/"
+mkdir -p "$STAGING_DIR/dist"
+cp -R "$DIST/." "$STAGING_DIR/dist/"
+
 echo "Creating zip: $(basename "$ZIP_PATH")"
-cd "$DIST"
+cd "$STAGING_DIR"
 zip -qr9 "$ZIP_PATH" .
 echo "✅ Created: $ZIP_PATH"
