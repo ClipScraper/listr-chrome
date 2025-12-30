@@ -1,6 +1,7 @@
 import browser from 'webextension-polyfill';
 import { initYouTubeContent } from './apps/youtube/content';
 import { initPinterestContent } from './apps/pinterest/content';
+import { initTwitterContent, onScrollTickTwitter } from './apps/twitter/content';
 
 console.log("Content script loaded.");
 
@@ -472,6 +473,9 @@ function doScrollStep() {
     return;
   }
 
+  // NEW: Incremental Twitter tweet discovery
+  onScrollTickTwitter();
+
   if (currentHeight > lastHeight) {
     lastHeight = currentHeight;
     lastChangeTime = Date.now();
@@ -695,3 +699,4 @@ browser.runtime.onMessage.addListener(async (message: any, _sender: any) => {
 // Initialize optional app integrations (safe on non-YouTube hosts)
 try { initYouTubeContent(); } catch {}
 try { initPinterestContent(); } catch {}
+try { initTwitterContent(); } catch {}

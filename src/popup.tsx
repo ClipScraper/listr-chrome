@@ -20,6 +20,11 @@ import {
   detectTiktokSectionOnActiveTab,
 } from './apps/tiktok/popup';
 import { getYouTubePageTitle } from './apps/youtube/popup';
+import {
+  getTwitterPageTitle,
+  handleTwitterScrollAndCollect as handleTwitterScrollAndCollectFn,
+  onTwitterScrollComplete as onTwitterScrollCompleteFn,
+} from './apps/twitter/popup';
 
 interface ContentScriptPingResponse {
   status: "pong";
@@ -99,6 +104,7 @@ const Popup: React.FC = () => {
   const isInstagramDomain = activeUrl.startsWith("https://www.instagram.com");
   const isYouTubeDomain = /^https:\/\/www\.youtube\./.test(activeUrl);
   const isPinterestDomain = /^https:\/\/(?:[^\/]+\.)?pinterest\./.test(activeUrl);
+  const isTwitterDomain = /^https:\/\/(?:x\.com|twitter\.com|.*\.x\.com|.*\.twitter\.com)/.test(activeUrl);
 
   // Detect homepage precisely
   const isPinterestRoot = React.useMemo(() => {
@@ -193,7 +199,23 @@ const Popup: React.FC = () => {
     addBookmarksToCollection,
   }), [activeUrl, isInstagramDomain]);
 
-  const { scrollStatus, timeRemaining, startScrolling, stopResumeScrolling, startInstagramScrolling, startYouTubeScrolling, cancelScrolling } = useScrolling(onInstaCompleteCb);
+  const onTwitterCompleteCb = React.useCallback(() => onTwitterScrollCompleteFn({
+    activeUrl,
+    isTwitterDomain,
+    addBookmarksToCollection,
+  }), [activeUrl, isTwitterDomain]);
+
+  // Combined callback that handles both Instagram and Twitter
+  const onScrollCompleteCb = React.useCallback(() => {
+    if (isInstagramDomain) {
+      onInstaCompleteCb();
+    }
+    if (isTwitterDomain) {
+      onTwitterCompleteCb();
+    }
+  }, [isInstagramDomain, isTwitterDomain, onInstaCompleteCb, onTwitterCompleteCb]);
+
+  const { scrollStatus, timeRemaining, startScrolling, stopResumeScrolling, startInstagramScrolling, startYouTubeScrolling, cancelScrolling } = useScrolling(onScrollCompleteCb);
 
   React.useEffect(() => {
     if (!isTikTokDomain) {
@@ -415,10 +437,20 @@ const Popup: React.FC = () => {
         ensureCollection('pinterest', 'pinterest_page', { type: 'profile', handle: 'Pinterest' });
         addBookmarksToCollection('pinterest', 'pinterest_page', links);
       }
+
+      /** Twitter incremental push */
+      if (message.type === 'twitterNewLinks') {
+        if (!isTwitterDomain) return;
+        const items: Array<{ url: string; userHandle: string; userName: string; text: string }> = message.items || [];
+        if (items.length === 0) return;
+        const collectionName = 'Bookmarks';
+        ensureCollection('twitter', collectionName, { type: 'bookmarks', handle: 'Bookmarks' });
+        addBookmarksToCollection('twitter', collectionName, items.map(item => item.url));
+      }
     };
     browser.runtime.onMessage.addListener(handler);
     return () => browser.runtime.onMessage.removeListener(handler);
-  }, [activeUrl, isPinterestDomain, isTikTokDomain, isInstagramDomain, isYouTubeDomain, isYouTubePlaylistPage, pinterestBoardInfo]);
+    }, [activeUrl, isPinterestDomain, isTikTokDomain, isInstagramDomain, isYouTubeDomain, isTwitterDomain, isYouTubePlaylistPage, pinterestBoardInfo]);
 
   const handleBookmarkAll = () => {
     browser.tabs.query({ active: true, currentWindow: true })
@@ -620,6 +652,9 @@ const Popup: React.FC = () => {
     if (platform === 'pinterest') {
       return 'pictures';
     }
+    if (platform === 'twitter') {
+      return 'unknown';
+    }
     return 'unknown';
   };
 
@@ -629,6 +664,14 @@ const Popup: React.FC = () => {
     startInstagramScrolling: () => startInstagramScrolling(scrollWaitTime),
     pingContentScript,
   }), [activeUrl, ensureCollection, startInstagramScrolling, scrollWaitTime]);
+
+  const handleTwitterScrollAndCollect = React.useCallback(() => handleTwitterScrollAndCollectFn({
+    activeUrl,
+    ensureCollection,
+    addBookmarksToCollection,
+    startScrolling: () => startScrolling(scrollWaitTime),
+    pingContentScript,
+  }), [activeUrl, ensureCollection, addBookmarksToCollection, startScrolling, scrollWaitTime]);
 
   const handleYouTubeAddVideo = async () => {
     try {
@@ -850,6 +893,7 @@ const Popup: React.FC = () => {
           ) : isTikTokDomain ? (<img src="assets/tiktok.webp" alt="TikTok" width={20} height={20} />
           ) : isYouTubeDomain ? (<img src="assets/youtube.webp" alt="YouTube" width={20} height={20} />
           ) : isPinterestDomain ? (<img src="assets/pinterest.png" alt="Pinterest" width={20} height={20} />
+          ) : isTwitterDomain ? (<img src="assets/x.com.png" alt="Twitter/X" width={20} height={20} />
           ) : (<Ban size={20} />)}
           <button onClick={toggleTheme} className="theme-toggle-button">
             {isDarkMode ? <Sun /> : <Moon />}
@@ -870,13 +914,15 @@ const Popup: React.FC = () => {
           <Settings size={20} />
         </button>
 
-          {(isInstagramDomain || isTikTokDomain || isYouTubeDomain || isPinterestDomain) && (
+          {(isInstagramDomain || isTikTokDomain || isYouTubeDomain || isPinterestDomain || isTwitterDomain) && (
             <div className="instagram-controls-section">
               <h4>
                 {isInstagramDomain ? igGetInstagramPageTitle(activeUrl)
                   : isTikTokDomain ? iGetTiktokPageTitle(activeUrl, tiktokSectionState)
                   : isYouTubeDomain ? youTubeTitle
-                  : pinterestTitle}
+                  : isPinterestDomain ? pinterestTitle
+                  : isTwitterDomain ? getTwitterPageTitle(activeUrl)
+                  : ''}
               </h4>
               <div className="instagram-buttons-row">
                 {scrollStatus === 'idle' && isInstagramDomain && (<button onClick={handleInstagramScrollAndCollect} className="theme-toggle-button" style={{ transform: 'scaleX(-1)' }}><ListTodo size={20} /></button>)}
@@ -908,6 +954,9 @@ const Popup: React.FC = () => {
                 )}
                 {scrollStatus === 'idle' && isYouTubeVideoPage && (
                   <button onClick={handleYouTubeAddVideo} className="theme-toggle-button" title="Add this video to collections"><Plus size={20} /></button>)}
+                {scrollStatus === 'idle' && isTwitterDomain && (
+                  <button onClick={handleTwitterScrollAndCollect} className="theme-toggle-button" title="Download tweets"><ListTodo size={20} /></button>
+                )}
                 {scrollStatus !== 'idle' && (
                   <>
                     <button onClick={stopResumeScrolling} className="theme-toggle-button">{scrollStatus === 'scrolling' ? <Pause size={20} /> : <Play size={20} />}</button>
@@ -999,6 +1048,7 @@ const Popup: React.FC = () => {
                         {platform === 'tiktok'    && <img src="assets/tiktok.webp" alt="TikTok" width={20} height={20} />}
                         {platform === 'youtube'   && <img src="assets/youtube.webp" alt="YouTube" width={20} height={20} />}
                         {platform === 'pinterest' && <img src="assets/pinterest.png" alt="Pinterest" width={20} height={20} />}
+                        {platform === 'twitter'   && <img src="assets/x.com.png" alt="Twitter/X" width={20} height={20} />}
                         {platform === 'other'     && <Ban size={20} />}
                       </td>
                       <td>{getCollectionMeta(platform, colName)?.type || 'profile'}</td>
