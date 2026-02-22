@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { createRoot } from 'react-dom/client';
-import { Sun, Moon, Download, Ban, ListTodo, Play, Pause, Trash2, Plus, Settings, Lightbulb } from 'lucide-react';
+import { Sun, Moon, Download, Ban, ListTodo, Play, Pause, Trash2, Plus, Settings, Lightbulb, MessageSquare } from 'lucide-react';
 import browser from 'webextension-polyfill';
 import { useActiveTab } from './hooks/useActiveTab';
 import { useScrolling } from './hooks/useScrolling';
@@ -24,6 +24,8 @@ import {
   getTwitterPageTitle,
   handleTwitterScrollAndCollect as handleTwitterScrollAndCollectFn,
   onTwitterScrollComplete as onTwitterScrollCompleteFn,
+  isTwitterThreadPage,
+  handleTwitterThreadDownload as handleTwitterThreadDownloadFn,
 } from './apps/twitter/popup';
 
 interface ContentScriptPingResponse {
@@ -100,11 +102,15 @@ const Popup: React.FC = () => {
   /** NEW: Pinterest active collection ref */
   const pinterestActiveRef = React.useRef<{ name: string; type: 'bookmarks' | 'profile'; handle: string; mode: 'board' | 'moreIdeas' } | null>(null);
 
+  /** Twitter active collection ref */
+  const twitterActiveCollectionRef = React.useRef<{ name: string; handle: string } | null>(null);
+
   const isTikTokDomain = activeUrl.startsWith("https://www.tiktok.com");
   const isInstagramDomain = activeUrl.startsWith("https://www.instagram.com");
   const isYouTubeDomain = /^https:\/\/www\.youtube\./.test(activeUrl);
   const isPinterestDomain = /^https:\/\/(?:[^\/]+\.)?pinterest\./.test(activeUrl);
   const isTwitterDomain = /^https:\/\/(?:x\.com|twitter\.com|.*\.x\.com|.*\.twitter\.com)/.test(activeUrl);
+  const isTwitterThread = React.useMemo(() => isTwitterThreadPage(activeUrl), [activeUrl]);
 
   // Detect homepage precisely
   const isPinterestRoot = React.useMemo(() => {
@@ -203,6 +209,7 @@ const Popup: React.FC = () => {
     activeUrl,
     isTwitterDomain,
     addBookmarksToCollection,
+    activeCollectionName: twitterActiveCollectionRef.current?.name || null,
   }), [activeUrl, isTwitterDomain]);
 
   // Combined callback that handles both Instagram and Twitter
@@ -443,14 +450,35 @@ const Popup: React.FC = () => {
         if (!isTwitterDomain) return;
         const items: Array<{ url: string; userHandle: string; userName: string; text: string }> = message.items || [];
         if (items.length === 0) return;
-        const collectionName = 'Bookmarks';
-        ensureCollection('twitter', collectionName, { type: 'bookmarks', handle: 'Bookmarks' });
+        const active = twitterActiveCollectionRef.current;
+        const collectionName = active?.name || 'Bookmarks';
+        const handle = active?.handle || 'Bookmarks';
+        ensureCollection('twitter', collectionName, { type: 'bookmarks', handle });
         addBookmarksToCollection('twitter', collectionName, items.map(item => item.url));
+      }
+
+      /** Twitter thread incremental push */
+      if (message.type === 'twitterThreadNewLinks') {
+        if (!isTwitterDomain || !isTwitterThread) return;
+        const items: Array<{ url: string; userHandle: string; userName: string; text: string }> = message.items || [];
+        if (items.length === 0) return;
+        try {
+          const u = new URL(activeUrl);
+          const pathParts = u.pathname.split('/').filter(Boolean);
+          const threadId = pathParts[2];
+          if (threadId) {
+            const collectionName = `Thread_${threadId}`;
+            ensureCollection('twitter', collectionName, { type: 'bookmarks', handle: `Thread ${threadId}` });
+            addBookmarksToCollection('twitter', collectionName, items.map(item => item.url));
+          }
+        } catch (error) {
+          console.error('Error handling thread links:', error);
+        }
       }
     };
     browser.runtime.onMessage.addListener(handler);
     return () => browser.runtime.onMessage.removeListener(handler);
-    }, [activeUrl, isPinterestDomain, isTikTokDomain, isInstagramDomain, isYouTubeDomain, isTwitterDomain, isYouTubePlaylistPage, pinterestBoardInfo]);
+    }, [activeUrl, isPinterestDomain, isTikTokDomain, isInstagramDomain, isYouTubeDomain, isTwitterDomain, isTwitterThread, isYouTubePlaylistPage, pinterestBoardInfo]);
 
   const handleBookmarkAll = () => {
     browser.tabs.query({ active: true, currentWindow: true })
@@ -588,6 +616,7 @@ const Popup: React.FC = () => {
     cancelScrolling();
     tiktokActiveCollectionRef.current = null;
     pinterestActiveRef.current = null;
+    twitterActiveCollectionRef.current = null;
     if (isPinterestDomain) {
       browser.tabs.query({ active: true, currentWindow: true })
         .then(tabs => {
@@ -666,6 +695,15 @@ const Popup: React.FC = () => {
   }), [activeUrl, ensureCollection, startInstagramScrolling, scrollWaitTime]);
 
   const handleTwitterScrollAndCollect = React.useCallback(() => handleTwitterScrollAndCollectFn({
+    activeUrl,
+    ensureCollection,
+    addBookmarksToCollection,
+    startScrolling: () => startScrolling(scrollWaitTime),
+    pingContentScript,
+    setActiveCollection: (info) => { twitterActiveCollectionRef.current = info; },
+  }), [activeUrl, ensureCollection, addBookmarksToCollection, startScrolling, scrollWaitTime]);
+
+  const handleTwitterThreadDownload = React.useCallback(() => handleTwitterThreadDownloadFn({
     activeUrl,
     ensureCollection,
     addBookmarksToCollection,
@@ -955,7 +993,12 @@ const Popup: React.FC = () => {
                 {scrollStatus === 'idle' && isYouTubeVideoPage && (
                   <button onClick={handleYouTubeAddVideo} className="theme-toggle-button" title="Add this video to collections"><Plus size={20} /></button>)}
                 {scrollStatus === 'idle' && isTwitterDomain && (
-                  <button onClick={handleTwitterScrollAndCollect} className="theme-toggle-button" title="Download tweets"><ListTodo size={20} /></button>
+                  <>
+                    <button onClick={handleTwitterScrollAndCollect} className="theme-toggle-button" title="Download tweets"><ListTodo size={20} /></button>
+                    {isTwitterThread && (
+                      <button onClick={handleTwitterThreadDownload} className="theme-toggle-button" title="Download thread"><MessageSquare size={20} /></button>
+                    )}
+                  </>
                 )}
                 {scrollStatus !== 'idle' && (
                   <>

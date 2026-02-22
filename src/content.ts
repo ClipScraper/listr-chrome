@@ -1,7 +1,7 @@
 import browser from 'webextension-polyfill';
 import { initYouTubeContent } from './apps/youtube/content';
 import { initPinterestContent } from './apps/pinterest/content';
-import { initTwitterContent, onScrollTickTwitter } from './apps/twitter/content';
+import { initTwitterContent, handleTwitterMessage, onScrollTickTwitter, onScrollTickTwitterThread } from './apps/twitter/content';
 
 console.log("Content script loaded.");
 
@@ -475,6 +475,8 @@ function doScrollStep() {
 
   // NEW: Incremental Twitter tweet discovery
   onScrollTickTwitter();
+  // NEW: Incremental Twitter thread discovery
+  onScrollTickTwitterThread();
 
   if (currentHeight > lastHeight) {
     lastHeight = currentHeight;
@@ -533,6 +535,7 @@ browser.runtime.onMessage.addListener(async (message: any, _sender: any) => {
         resolve(undefined);
         return;
       }
+
 
       if (typeof message.waitTime === 'number' && message.waitTime >= 0) {
         scrollWaitTime = message.waitTime;
@@ -684,10 +687,17 @@ browser.runtime.onMessage.addListener(async (message: any, _sender: any) => {
         case 'ping':
           resolve({ status: 'pong' });
           break;
-        default:
+        default: {
+          // Try Twitter handler before giving up
+          const twitterResult = handleTwitterMessage(message);
+          if (twitterResult !== undefined) {
+            resolve(twitterResult);
+            break;
+          }
           // Unhandled action: resolve with undefined to let other listeners try.
           resolve(undefined);
           break;
+        }
       }
     } catch (e) {
       resolve({ error: String(e) });
