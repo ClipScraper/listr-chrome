@@ -3,7 +3,7 @@ import browser from 'webextension-polyfill';
 
 export interface Bookmark {
   uuid: string;
-  platform: 'tiktok' | 'instagram' | 'youtube' | 'pinterest' | 'other';
+  platform: 'tiktok' | 'instagram' | 'youtube' | 'pinterest' | 'twitter' | 'other';
   url: string;
   collection: string;
 }
@@ -53,7 +53,7 @@ export function useCollections() {
     return out as T;
   }
 
-  const addBookmarksToCollection = (platform: 'tiktok' | 'instagram' | 'youtube' | 'pinterest' | 'other', collectionName: string, urls: string[]) => {
+  const addBookmarksToCollection = (platform: 'tiktok' | 'instagram' | 'youtube' | 'pinterest' | 'twitter' | 'other', collectionName: string, urls: string[]) => {
     if (!urls || urls.length === 0) return;
     setCollectionStore(prevStore => {
       const platformMap = prevStore.collections[platform] || {};
@@ -85,7 +85,7 @@ export function useCollections() {
     });
   };
 
-  const ensureCollection = (platform: 'tiktok' | 'instagram' | 'youtube' | 'pinterest' | 'other', collectionName: string, meta?: CollectionMeta) => {
+  const ensureCollection = (platform: 'tiktok' | 'instagram' | 'youtube' | 'pinterest' | 'twitter' | 'other', collectionName: string, meta?: CollectionMeta) => {
     setCollectionStore(prevStore => {
       const platformCollections = prevStore.collections[platform] || {};
       const already = !!platformCollections[collectionName];
@@ -179,7 +179,7 @@ export function useCollections() {
     return collectionStore.meta?.[platform]?.[collectionName];
   };
 
-  const getCollectionsByPlatform = (platform: 'tiktok' | 'instagram' | 'youtube' | 'pinterest' | 'other') => {
+  const getCollectionsByPlatform = (platform: 'tiktok' | 'instagram' | 'youtube' | 'pinterest' | 'twitter' | 'other') => {
     return collectionStore.collections[platform] || {};
   };
 

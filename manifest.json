@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "listr",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "description": "Displays a popup with bookmarks and more.",
   "icons": {
     "16": "assets/icons/icon-16.png",
@@ -26,7 +26,11 @@
         "https://www.tiktok.com/*",
         "https://www.instagram.com/*",
         "https://*.youtube.com/*",
-        "https://*.pinterest.com/*"
+        "https://*.pinterest.com/*",
+        "https://x.com/*",
+        "https://twitter.com/*",
+        "https://*.x.com/*",
+        "https://*.twitter.com/*"
       ],
       "js": [
         "dist/content.js"
