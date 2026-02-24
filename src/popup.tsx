@@ -103,7 +103,7 @@ const Popup: React.FC = () => {
   const pinterestActiveRef = React.useRef<{ name: string; type: 'bookmarks' | 'profile'; handle: string; mode: 'board' | 'moreIdeas' } | null>(null);
 
   /** Twitter active collection ref */
-  const twitterActiveCollectionRef = React.useRef<{ name: string; handle: string } | null>(null);
+  const twitterActiveCollectionRef = React.useRef<{ name: string; handle: string; isThread?: boolean } | null>(null);
 
   const isTikTokDomain = activeUrl.startsWith("https://www.tiktok.com");
   const isInstagramDomain = activeUrl.startsWith("https://www.instagram.com");
@@ -163,10 +163,11 @@ const Popup: React.FC = () => {
   const [validateBeforeClear, setValidateBeforeClear] = React.useState<boolean>(true);
   const [scrollWaitTime, setScrollWaitTime] = React.useState<number>(3);
   const [downloadFormat, setDownloadFormat] = React.useState<'csv' | 'json'>('csv');
+  const [twitterThreadAuthorOnly, setTwitterThreadAuthorOnly] = React.useState<boolean>(true);
 
 
   React.useEffect(() => {
-    browser.storage.local.get(['validateBeforeClear', 'scrollWaitTime', 'downloadFormat']).then(result => {
+    browser.storage.local.get(['validateBeforeClear', 'scrollWaitTime', 'downloadFormat', 'twitterThreadAuthorOnly']).then(result => {
       if (typeof result.validateBeforeClear === 'boolean') {
         setValidateBeforeClear(result.validateBeforeClear);
       }
@@ -175,6 +176,9 @@ const Popup: React.FC = () => {
       }
       if (result.downloadFormat === 'csv' || result.downloadFormat === 'json') {
         setDownloadFormat(result.downloadFormat);
+      }
+      if (typeof result.twitterThreadAuthorOnly === 'boolean') {
+        setTwitterThreadAuthorOnly(result.twitterThreadAuthorOnly);
       }
     });
   }, []);
@@ -199,6 +203,11 @@ const Popup: React.FC = () => {
     }
   };
 
+  const handleSetTwitterThreadAuthorOnly = (value: boolean) => {
+    setTwitterThreadAuthorOnly(value);
+    browser.storage.local.set({ twitterThreadAuthorOnly: value });
+  };
+
   const onInstaCompleteCb = React.useCallback(() => iOnInstagramScrollComplete({
     activeUrl,
     isInstagramDomain,
@@ -217,7 +226,7 @@ const Popup: React.FC = () => {
     if (isInstagramDomain) {
       onInstaCompleteCb();
     }
-    if (isTwitterDomain) {
+    if (isTwitterDomain && !twitterActiveCollectionRef.current?.isThread) {
       onTwitterCompleteCb();
     }
   }, [isInstagramDomain, isTwitterDomain, onInstaCompleteCb, onTwitterCompleteCb]);
@@ -445,12 +454,13 @@ const Popup: React.FC = () => {
         addBookmarksToCollection('pinterest', 'pinterest_page', links);
       }
 
-      /** Twitter incremental push */
+      /** Twitter incremental push (regular scanner — skip when a thread collection is active) */
       if (message.type === 'twitterNewLinks') {
         if (!isTwitterDomain) return;
+        const active = twitterActiveCollectionRef.current;
+        if (active?.isThread) return; // thread collection uses twitterThreadNewLinks instead
         const items: Array<{ url: string; userHandle: string; userName: string; text: string }> = message.items || [];
         if (items.length === 0) return;
-        const active = twitterActiveCollectionRef.current;
         const collectionName = active?.name || 'Bookmarks';
         const handle = active?.handle || 'Bookmarks';
         ensureCollection('twitter', collectionName, { type: 'bookmarks', handle });
@@ -459,20 +469,12 @@ const Popup: React.FC = () => {
 
       /** Twitter thread incremental push */
       if (message.type === 'twitterThreadNewLinks') {
-        if (!isTwitterDomain || !isTwitterThread) return;
+        if (!isTwitterDomain) return;
         const items: Array<{ url: string; userHandle: string; userName: string; text: string }> = message.items || [];
         if (items.length === 0) return;
-        try {
-          const u = new URL(activeUrl);
-          const pathParts = u.pathname.split('/').filter(Boolean);
-          const threadId = pathParts[2];
-          if (threadId) {
-            const collectionName = `Thread_${threadId}`;
-            ensureCollection('twitter', collectionName, { type: 'bookmarks', handle: `Thread ${threadId}` });
-            addBookmarksToCollection('twitter', collectionName, items.map(item => item.url));
-          }
-        } catch (error) {
-          console.error('Error handling thread links:', error);
+        const active = twitterActiveCollectionRef.current;
+        if (active) {
+          addBookmarksToCollection('twitter', active.name, items.map(item => item.url));
         }
       }
     };
@@ -700,7 +702,7 @@ const Popup: React.FC = () => {
     addBookmarksToCollection,
     startScrolling: () => startScrolling(scrollWaitTime),
     pingContentScript,
-    setActiveCollection: (info) => { twitterActiveCollectionRef.current = info; },
+    setActiveCollection: (info) => { twitterActiveCollectionRef.current = info ? { ...info, isThread: false } : null; },
   }), [activeUrl, ensureCollection, addBookmarksToCollection, startScrolling, scrollWaitTime]);
 
   const handleTwitterThreadDownload = React.useCallback(() => handleTwitterThreadDownloadFn({
@@ -709,7 +711,9 @@ const Popup: React.FC = () => {
     addBookmarksToCollection,
     startScrolling: () => startScrolling(scrollWaitTime),
     pingContentScript,
-  }), [activeUrl, ensureCollection, addBookmarksToCollection, startScrolling, scrollWaitTime]);
+    setActiveCollection: (info) => { twitterActiveCollectionRef.current = info ? { ...info, isThread: true } : null; },
+    authorOnly: twitterThreadAuthorOnly,
+  }), [activeUrl, ensureCollection, addBookmarksToCollection, startScrolling, scrollWaitTime, twitterThreadAuthorOnly]);
 
   const handleYouTubeAddVideo = async () => {
     try {
@@ -1056,6 +1060,20 @@ const Popup: React.FC = () => {
                 </select>
               </div>
             </div>
+            {isTwitterDomain && (
+              <div className="setting-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <label htmlFor="twitter-author-only" style={{ flex: '0 0 75%', flexShrink: 0 }}>Thread: author's tweets only</label>
+                <div style={{ flex: '1 1 auto', display: 'flex', justifyContent: 'flex-end', paddingRight: '5px' }}>
+                  <input
+                    id="twitter-author-only"
+                    className="setting-checkbox"
+                    type="checkbox"
+                    checked={twitterThreadAuthorOnly}
+                    onChange={(e) => handleSetTwitterThreadAuthorOnly(e.target.checked)}
+                  />
+                </div>
+              </div>
+            )}
           </div>
         ) : (
           <div className="collections-table-section">

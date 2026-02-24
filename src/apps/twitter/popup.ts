@@ -94,12 +94,14 @@ export function isTwitterThreadPage(url: string): boolean {
 
 export async function handleTwitterThreadDownload(deps: {
   activeUrl: string;
-  ensureCollection: (platform: 'twitter', collectionName: string, meta?: { type: 'bookmarks' | 'profile'; handle: string }) => void;
+  ensureCollection: (platform: 'twitter', collectionName: string, meta?: { type: 'bookmarks' | 'profile' | 'thread'; handle: string }) => void;
   addBookmarksToCollection: (platform: 'twitter', collectionName: string, urls: string[]) => void;
   startScrolling: () => void;
   pingContentScript: (tabId: number) => Promise<boolean>;
+  setActiveCollection: (info: { name: string; handle: string } | null) => void;
+  authorOnly?: boolean;
 }) {
-  const { activeUrl, ensureCollection, addBookmarksToCollection, startScrolling, pingContentScript } = deps;
+  const { activeUrl, ensureCollection, addBookmarksToCollection, startScrolling, pingContentScript, setActiveCollection, authorOnly = true } = deps;
   const tabs = await browser.tabs.query({ active: true, currentWindow: true });
   const tabId = tabs[0]?.id;
   if (tabId == null) {
@@ -112,35 +114,34 @@ export async function handleTwitterThreadDownload(deps: {
     alert('The content script is not active on this page. Please refresh the page and try again.');
     return;
   }
-  
-  // Extract thread ID from URL
+
   try {
     const u = new URL(activeUrl);
     const pathParts = u.pathname.split('/').filter(Boolean);
-    const threadId = pathParts[2]; // /{username}/status/{id}
-    
-    if (!threadId) {
-      alert('Could not determine thread ID from URL.');
+    const author = pathParts[0]; // /{username}/status/{id}
+    const threadId = pathParts[2];
+
+    if (!threadId || !author) {
+      alert('Could not determine thread info from URL.');
       return;
     }
-    
-    // Reset Twitter state before starting
+
     await browser.tabs.sendMessage(tabId, { action: 'resetTwitterState' }).catch(() => null);
-    
-    // Create collection name from thread ID
-    const collectionName = `Thread_${threadId}`;
-    ensureCollection('twitter', collectionName, { type: 'bookmarks', handle: `Thread ${threadId}` });
-    
-    // Start collecting thread replies
-    await browser.tabs.sendMessage(tabId, { action: 'startTwitterThreadCollection', threadId }).catch(() => null);
-    
-    // Do an initial scan
+
+    const handle = `@${author}`;
+    const collectionName = `${author}_thread_${threadId}`;
+    ensureCollection('twitter', collectionName, { type: 'thread', handle });
+    setActiveCollection({ name: collectionName, handle });
+
+    // Start collecting - pass author so content script can filter by author
+    await browser.tabs.sendMessage(tabId, { action: 'startTwitterThreadCollection', threadId, author, authorOnly }).catch(() => null);
+
     const response = await browser.tabs.sendMessage(tabId, { action: 'scanTwitterThreadOnce', threadId }).catch(() => null) as any;
     const items = (response?.items || []) as Array<{ url: string; userHandle: string; userName: string; text: string }>;
     if (items && items.length > 0) {
       addBookmarksToCollection('twitter', collectionName, items.map(item => item.url));
     }
-    
+
     setTimeout(() => {
       startScrolling();
     }, 500);
