@@ -473,10 +473,14 @@ function doScrollStep() {
     return;
   }
 
-  // NEW: Incremental Twitter tweet discovery
-  onScrollTickTwitter();
-  // NEW: Incremental Twitter thread discovery
-  onScrollTickTwitterThread();
+  // Twitter: only run one scanner at a time.
+  // When a thread collection is active, use the thread scanner (which respects author filtering).
+  // Otherwise, use the regular tweet scanner.
+  if (onScrollTickTwitterThread()) {
+    // thread collection is active, skip the regular scanner
+  } else {
+    onScrollTickTwitter();
+  }
 
   if (currentHeight > lastHeight) {
     lastHeight = currentHeight;

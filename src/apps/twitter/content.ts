@@ -395,6 +395,8 @@ export function onScrollTickTwitter() {
 
 // Thread collection state
 let currentThreadId: string | null = null;
+let currentThreadAuthor: string | null = null; // username without @
+let currentThreadAuthorOnly: boolean = true; // filter by author only
 const collectedThreadLinks = new Set<string>();
 const collectedThreadItems: TwitterItem[] = [];
 
@@ -403,91 +405,80 @@ function scanAndCollectTwitterThread(logEach: boolean = true): TwitterItem[] {
     if (logEach) console.log('Twitter thread scan: Not on Twitter/X domain');
     return [];
   }
-  
+
   if (!currentThreadId) {
     if (logEach) console.log('Twitter thread scan: No thread ID set');
     return [];
   }
-  
+
   const newlyFound: TwitterItem[] = [];
-  
-  // Find all article elements with data-testid="tweet"
-  // Thread replies are also in article elements
+
   const articles = document.querySelectorAll<HTMLElement>('article[data-testid="tweet"]');
-  
+
   if (logEach) {
-    console.log(`Twitter thread scan: Found ${articles.length} tweet articles on page`);
+    console.log(`Twitter thread scan: Found ${articles.length} tweet articles, filtering by author: ${currentThreadAuthor || 'any'}`);
   }
-  
-  articles.forEach((article, index) => {
-    // Find the status link within this article
+
+  articles.forEach((article) => {
     const statusLink = article.querySelector<HTMLAnchorElement>('a[href*="/status/"]');
     if (!statusLink) return;
-    
+
     const href = statusLink.getAttribute('href') || '';
     if (!href || !href.includes('/status/')) return;
-    
-    // Normalize the URL
+
+    // Extract username from the status link href: /{username}/status/{id}
+    const tweetUsername = href.split('/status/')[0].split('/').filter(Boolean).pop() || '';
+
+    // Filter: only collect tweets by the thread author (when enabled)
+    if (currentThreadAuthorOnly && currentThreadAuthor && tweetUsername.toLowerCase() !== currentThreadAuthor.toLowerCase()) {
+      return;
+    }
+
     const statusUrl = toAbsoluteTwitterUrl(href);
     if (!statusUrl) return;
-    
-    // Skip if already collected
+
     if (collectedThreadLinks.has(statusUrl)) return;
-    
-    // Extract tweet data directly from the article
+
     const item = extractTweetData(article, statusUrl);
-    
-    // If extraction failed, create a minimal item with URL and username from href
+
     if (!item) {
-      const pathParts = href.split('/status/')[0].split('/').filter(Boolean);
-      const username = pathParts.length > 0 ? pathParts[pathParts.length - 1] : '';
-      const userHandle = username && /^[a-zA-Z0-9_]+$/.test(username) ? `@${username}` : 'unknown';
-      
+      const userHandle = tweetUsername && /^[a-zA-Z0-9_]+$/.test(tweetUsername) ? `@${tweetUsername}` : 'unknown';
+
       const fallbackItem: TwitterItem = {
         url: statusUrl,
         userHandle: userHandle,
         userName: 'unknown',
         text: '',
       };
-      
+
       collectedThreadLinks.add(statusUrl);
       collectedThreadItems.push(fallbackItem);
       newlyFound.push(fallbackItem);
-      if (logEach) {
-        console.log(`Twitter thread scan: Added tweet ${newlyFound.length} (fallback):`, fallbackItem);
-      }
       return;
     }
-    
-    // Add the item if we have a valid URL and it's not already collected
+
     if (item && item.url === statusUrl && !collectedThreadLinks.has(item.url)) {
       collectedThreadLinks.add(item.url);
       collectedThreadItems.push(item);
       newlyFound.push(item);
-      if (logEach) {
-        console.log(`Twitter thread scan: Added tweet ${newlyFound.length}:`, item);
-      }
     }
   });
-  
+
   if (logEach) {
-    if (newlyFound.length === 0) {
-      console.log(`Twitter thread scan: No new tweets found. Total articles: ${articles.length}, Already collected: ${collectedThreadLinks.size}`);
-    } else {
-      console.log(`Twitter thread scan: Found ${newlyFound.length} new tweets. Total collected: ${collectedThreadLinks.size}`);
-    }
+    console.log(`Twitter thread scan: Found ${newlyFound.length} new tweets by author. Total collected: ${collectedThreadLinks.size}`);
   }
-  
+
   return newlyFound;
 }
 
-export function onScrollTickTwitterThread() {
-  if (!currentThreadId) return;
+/** Returns true if a thread collection is active (so callers can skip the regular scanner). */
+export function onScrollTickTwitterThread(): boolean {
+  if (!currentThreadId) return false;
   const newly = scanAndCollectTwitterThread(true);
   if (newly.length > 0) {
     try {
-      browser.runtime.sendMessage({ 
-        type: 'twitterThreadNewLinks', 
+      browser.runtime.sendMessage({
+        type: 'twitterThreadNewLinks',
         items: newly.map(item => ({
           url: item.url,
           userHandle: item.userHandle,
@@ -497,6 +488,7 @@ export function onScrollTickTwitterThread() {
       }).catch(() => {});
     } catch {}
   }
+  return true;
 }
 
 /** Handle a Twitter-specific message. Returns a response object or undefined if not handled. */
@@ -516,9 +508,11 @@ export function handleTwitterMessage(message: any): any {
   }
   if (message.action === 'startTwitterThreadCollection') {
     currentThreadId = message.threadId || null;
+    currentThreadAuthor = message.author || null;
+    currentThreadAuthorOnly = message.authorOnly !== false; // default true
     collectedThreadLinks.clear();
     collectedThreadItems.length = 0;
-    return { status: 'started', threadId: currentThreadId };
+    return { status: 'started', threadId: currentThreadId, author: currentThreadAuthor, authorOnly: currentThreadAuthorOnly };
   }
   if (message.action === 'scanTwitterThreadOnce') {
     const items = scanAndCollectTwitterThread(true);

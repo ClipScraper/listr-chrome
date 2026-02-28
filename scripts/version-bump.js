@@ -3,19 +3,12 @@ const { execSync } = require('child_process');
 
 const manifestPath = './manifest.json';
 const packageJsonPath = './package.json';
-const commitMsgPath = process.argv[2];
-
-if (!commitMsgPath) {
-  console.log('No commit message path provided. Skipping version bump.');
-  process.exit(0);
-}
 
 // Function to get file content from a specific branch
 function getFileFromBranch(branch, path) {
   try {
     return execSync(`git show ${branch}:${path}`).toString();
   } catch (error) {
-    console.error(`Error getting ${path} from branch ${branch}:`, error);
     return null;
   }
 }
@@ -39,8 +32,7 @@ if (masterVersion !== currentVersion) {
   process.exit(0);
 }
 
-// 2. Bump version based on commit message and branch name
-const commitMessage = fs.readFileSync(commitMsgPath, 'utf8');
+// 2. Bump version based on branch name (use BUMP=major env var to force major)
 const branchName = execSync('git rev-parse --abbrev-ref HEAD').toString().trim();
 
 let [major, minor, patch] = currentVersion.split('.').map(Number);
@@ -50,7 +42,7 @@ if (branchName.startsWith('feature/')) {
   bumpType = 'minor';
 }
 
-if (commitMessage.includes('[major]')) {
+if (process.env.BUMP === 'major') {
   bumpType = 'major';
 }
 
